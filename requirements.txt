@@ -1,0 +1,48 @@
+# Face Recognition Attendance System - Core Dependencies
+# Python 3.12+ compatible (Pins removed for build success)
+
+# Computer Vision & Image Processing
+opencv-python
+Pillow
+
+# Face Detection
+mtcnn
+
+# Face Recognition & Deep Learning
+deepface
+tensorflow
+keras
+
+# Data Processing
+numpy
+pandas
+
+# Database
+sqlalchemy
+alembic
+
+# API Framework
+fastapi
+uvicorn
+python-multipart
+pydantic
+pydantic-settings
+
+# Admin Dashboard
+streamlit
+plotly
+
+# Security & Authentication
+python-jose[cryptography]
+passlib[bcrypt]
+python-dotenv
+
+# Utilities
+python-dateutil
+pytz
+tqdm
+
+# Testing
+pytest
+pytest-cov
+httpx

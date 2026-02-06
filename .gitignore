@@ -1,0 +1,66 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environment
+venv/
+env/
+ENV/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+database/*.db
+
+# Logs
+logs/
+*.log
+
+# Data directories (exclude actual data, keep structure)
+data/student_images/*
+!data/student_images/.gitkeep
+data/embeddings/*
+!data/embeddings/.gitkeep
+data/unknown_faces/*
+!data/unknown_faces/.gitkeep
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# pytest
+.pytest_cache/
+htmlcov/
+.coverage
+*.cover
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Model files (large binaries)
+*.h5
+*.pkl
+*.pth
+*.onnx
+*.pb
+shape_predictor_*.dat
+
+# Temporary files
+*.tmp
+*.bak
