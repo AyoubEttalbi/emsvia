@@ -114,19 +114,21 @@ class AttendanceDB:
     # --- Attendance Operations ---
 
     def mark_attendance(self, session: Session, student_id: int, confidence: float, 
-                        camera_id: str = "main_camera", image_path: Optional[str] = None) -> Optional[AttendanceRecord]:
+                        status: str = "present", camera_id: str = "main_camera", 
+                        image_path: Optional[str] = None) -> Optional[AttendanceRecord]:
         """Log a new attendance record."""
         try:
             record = AttendanceRecord(
                 student_id=student_id,
                 confidence_score=confidence,
+                status=status,
                 camera_id=camera_id,
                 image_path=image_path
             )
             session.add(record)
             session.commit()
             session.refresh(record)
-            logger.info(f"Attendance marked for student ID {student_id}")
+            logger.info(f"Attendance marked for student ID {student_id} (Status: {status})")
             return record
         except SQLAlchemyError as e:
             session.rollback()

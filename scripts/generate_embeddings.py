@@ -19,6 +19,31 @@ from models.embeddings_manager import EmbeddingsManager
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+def process_student_images(session, student, student_dir, recognizer, em_manager):
+    """
+    Generates embeddings for a single student's images.
+    """
+    student_id = student_dir.name
+    image_files = list(student_dir.glob("*.jpg")) + list(student_dir.glob("*.png"))
+    if not image_files:
+        print(f"  No images found for {student_id}.")
+        return 0, 0
+
+    success_count = 0
+    for img_path in tqdm(image_files, desc=f"  Generating embeddings for {student_id}"):
+        img = cv2.imread(str(img_path))
+        if img is None:
+            continue
+
+        # Generate embedding
+        embedding = recognizer.generate_embedding(img)
+        if embedding is not None:
+            # Save to DB and Cache
+            em_manager.add_embedding(session, student.id, embedding)
+            success_count += 1
+    
+    return success_count, len(image_files)
+
 def generate_embeddings():
     """
     Scans data/student_images/ and generates embeddings for all students.
@@ -52,29 +77,8 @@ def generate_embeddings():
                 print(f"  Warning: Student {student_id} not found in database. Skipping.")
                 continue
 
-            # Clear existing embeddings for this student to re-generate if needed
-            # (Optional: Only if you want to replace old embeddings)
-            # db_manager.clear_student_embeddings(session, student.id)
-
-            image_files = list(student_dir.glob("*.jpg")) + list(student_dir.glob("*.png"))
-            if not image_files:
-                print(f"  No images found for {student_id}.")
-                continue
-
-            success_count = 0
-            for img_path in tqdm(image_files, desc=f"  Generating embeddings for {student_id}"):
-                img = cv2.imread(str(img_path))
-                if img is None:
-                    continue
-
-                # Generate embedding
-                embedding = recognizer.generate_embedding(img)
-                if embedding is not None:
-                    # Save to DB and Cache
-                    em_manager.add_embedding(session, student.id, embedding)
-                    success_count += 1
-
-            print(f"  Successfully generated {success_count}/{len(image_files)} embeddings.")
+            success, total = process_student_images(session, student, student_dir, recognizer, em_manager)
+            print(f"  Successfully generated {success}/{total} embeddings.")
 
         print("\n" + "="*50)
         print("      PROCESSING COMPLETE")

@@ -98,8 +98,10 @@ def main():
                                 active_student_ids.add(student_id)
                                 
                                 # 5. Attendance Logic
+                                # confidence = 1.0 - distance (clamped to 0-1 range)
+                                confidence = max(0.0, min(1.0, 1.0 - dist))
                                 session = db_manager.get_session()
-                                attend_mgr.process_recognition(session, student_id)
+                                attend_mgr.process_recognition(session, student_id, confidence=confidence)
                                 session.close()
                                 
                             else:

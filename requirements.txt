@@ -38,6 +38,7 @@ passlib[bcrypt]
 python-dotenv
 
 # Utilities
+scipy
 python-dateutil
 pytz
 tqdm

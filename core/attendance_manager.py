@@ -31,7 +31,8 @@ class AttendanceManager:
         self.consecutive_counts: Dict[int, int] = {} # student_id -> count
         self.last_marked: Dict[int, float] = {}      # student_id -> timestamp (unix)
         
-    def process_recognition(self, session: Session, student_id: int) -> bool:
+    def process_recognition(self, session: Session, student_id: int, 
+                            confidence: float = 0.0, status: str = "present") -> bool:
         """
         Process a successful recognition event.
         Returns True if attendance was actually marked in the DB.
@@ -48,7 +49,7 @@ class AttendanceManager:
             
             if (now - last_time) / 60.0 >= self.cooldown_minutes:
                 # 4. Mark in Database
-                success = self.db.mark_attendance(session, student_id, status="Present")
+                success = self.db.mark_attendance(session, student_id, confidence=confidence, status=status)
                 
                 if success:
                     self.last_marked[student_id] = now

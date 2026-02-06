@@ -13,10 +13,39 @@ sys.path.append(str(BASE_DIR))
 from config.settings import DATABASE_URL
 from database.crud import AttendanceDB
 from models.face_detector import FaceDetector
+from models.face_recognizer import FaceRecognizer
+from models.embeddings_manager import EmbeddingsManager
+from scripts.generate_embeddings import process_student_images
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+def get_next_student_id(db_manager: AttendanceDB, session) -> str:
+    """
+    Calculate the next available Student ID in the format STUxxx.
+    """
+    students = db_manager.get_all_students(session, active_only=False)
+    if not students:
+        return "STU001"
+    
+    max_id = 0
+    for s in students:
+        try:
+            if s.student_id.startswith("STU"):
+                num = int(s.student_id[3:])
+                if num > max_id:
+                    max_id = num
+            else:
+                # Handle cases like 'stu001' case-insensitively if needed
+                if s.student_id.upper().startswith("STU"):
+                    num = int(s.student_id[3:])
+                    if num > max_id:
+                        max_id = num
+        except (ValueError, IndexError):
+            continue
+            
+    return f"STU{max_id + 1:03d}"
 
 def collect_student_data():
     """
@@ -33,36 +62,33 @@ def collect_student_data():
     detector = FaceDetector(min_confidence=0.9)
 
     try:
-        # 2. Collect Metadata
-        student_id = input("Enter Student ID (e.g., STU001): ").strip()
+        # 2. Assign Student ID automatically
+        student_id = get_next_student_id(db_manager, session)
+        print(f"Assigning Student ID: {student_id}")
         
-        # Check if student already exists
-        existing_student = db_manager.get_student_by_id(session, student_id)
-        if existing_student:
-            print(f"Error: Student with ID {student_id} already exists ({existing_student.first_name} {existing_student.last_name}).")
-            return
-
+        # 3. Collect Metadata
         first_name = input("Enter First Name: ").strip()
         last_name = input("Enter Last Name: ").strip()
         email = input("Enter Email (optional): ").strip() or None
         
-        # 3. Choose Mode
+        # 4. Choose Mode
         print("\nHow would you like to provide images?")
         print("1. Live Camera (Requires USB/IP Bridge)")
         print("2. Folder Mode (Load existing photos from a directory)")
         mode_choice = input("Select mode (1/2): ").strip()
 
-        # 4. Create Student in DB
+        # 5. Create Student in DB
         student = db_manager.add_student(session, student_id, first_name, last_name, email)
         if not student:
             print("Failed to create student in database.")
             return
 
-        # 5. Prepare Storage
+        # 6. Prepare Storage
         images_dir = BASE_DIR / "data" / "student_images" / student_id
         if not images_dir.exists():
             images_dir.mkdir(parents=True)
 
+        captured_count = 0
         if mode_choice == "2":
             # --- FOLDER MODE ---
             folder_path = input("Enter path to your image folder: ").strip()
@@ -74,7 +100,6 @@ def collect_student_data():
             image_files = list(source_dir.glob("*.jpg")) + list(source_dir.glob("*.png")) + list(source_dir.glob("*.jpeg"))
             print(f"Found {len(image_files)} images. Validating and processing...")
 
-            captured_count = 0
             for img_path in image_files:
                 frame = cv2.imread(str(img_path))
                 if frame is None: continue
@@ -102,10 +127,9 @@ def collect_student_data():
                 print("Error: Could not open camera.")
                 return
 
-            print(f"\nStudent {first_name} registered successfully.")
+            print(f"\nStudent {first_name} registered successfully with ID {student_id}.")
             print("Press 'c' to capture, 'q' to quit.")
 
-            captured_count = 0
             target_count = 55
 
             while captured_count < target_count:
@@ -138,6 +162,19 @@ def collect_student_data():
 
             cap.release()
             cv2.destroyAllWindows()
+
+        # 7. Post-enrollment Embedding Generation
+        if captured_count > 0:
+            choice = input(f"\nEnrollment finished. Do you want to auto-generate embeddings for {student_id} now? (y/n): ").strip().lower()
+            if choice == 'y':
+                print("\nInitializing Face Recognizer and Embedding Manager...")
+                recognizer = FaceRecognizer()
+                em_manager = EmbeddingsManager(db_manager)
+                
+                success, total = process_student_images(session, student, images_dir, recognizer, em_manager)
+                print(f"Successfully generated {success}/{total} embeddings for {student_id}.")
+            else:
+                print(f"\nSkipping embedding generation. You can run it manually later using: python scripts/generate_embeddings.py")
 
     except Exception as e:
         logger.error(f"Error during enrollment: {e}")
