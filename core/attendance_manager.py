@@ -1,81 +1,77 @@
 import logging
 import time
 from datetime import datetime
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Any
 from sqlalchemy.orm import Session
 from database.crud import AttendanceDB
+from config.settings import ATTENDANCE_MIN_CONSISTENCY, ATTENDANCE_COOLDOWN
 
 logger = logging.getLogger(__name__)
 
 class AttendanceManager:
     """
     Manages high-level attendance logic, including cooldowns and verification.
+    Now supports track-based evidence accumulation.
     """
     
     def __init__(self, db_manager: AttendanceDB, 
-                 cooldown_minutes: int = 30,
-                 min_consecutive_frames: int = 3):
-        """
-        Initialize the Attendance Manager.
-        
-        Args:
-            db_manager: Instance of AttendanceDB.
-            cooldown_minutes: Time to wait before re-marking same person.
-            min_consecutive_frames: Frames a person must be seen before marking.
-        """
+                 cooldown_seconds: int = ATTENDANCE_COOLDOWN,
+                 min_consistency: int = ATTENDANCE_MIN_CONSISTENCY):
         self.db = db_manager
-        self.cooldown_minutes = cooldown_minutes
-        self.min_consecutive_frames = min_consecutive_frames
+        self.cooldown_seconds = cooldown_seconds
+        self.min_consistency = min_consistency
         
         # Tracking state
-        self.consecutive_counts: Dict[int, int] = {} # student_id -> count
-        self.last_marked: Dict[int, float] = {}      # student_id -> timestamp (unix)
+        self.track_evidence: Dict[int, Dict[int, int]] = {} # track_id -> {student_id: count}
+        self.last_marked: Dict[int, float] = {}             # student_id -> timestamp (unix)
         
     def process_recognition(self, session: Session, student_id: int, 
-                            confidence: float = 0.0, status: str = "present") -> bool:
+                             track_id: int, confidence: float = 0.0) -> bool:
         """
-        Process a successful recognition event.
-        Returns True if attendance was actually marked in the DB.
+        Process a recognition event using temporal evidence.
         """
-        # 1. Update consecutive counts
-        self.consecutive_counts[student_id] = self.consecutive_counts.get(student_id, 0) + 1
+        if track_id not in self.track_evidence:
+            self.track_evidence[track_id] = {}
         
-        # 2. Check if we reached the required frame threshold
-        if self.consecutive_counts[student_id] >= self.min_consecutive_frames:
+        # Accumulate evidence for this track
+        self.track_evidence[track_id][student_id] = self.track_evidence[track_id].get(student_id, 0) + 1
+        
+        # Check if we have enough consistent evidence for THIS student on THIS track
+        if self.track_evidence[track_id][student_id] >= self.min_consistency:
             
-            # 3. Cooldown check
+            # Cooldown check for the student
             now = time.time()
             last_time = self.last_marked.get(student_id, 0)
             
-            if (now - last_time) / 60.0 >= self.cooldown_minutes:
-                # 4. Mark in Database
-                success = self.db.mark_attendance(session, student_id, confidence=confidence, status=status)
+            if (now - last_time) >= self.cooldown_seconds:
+                # Mark in Database
+                success = self.db.mark_attendance(session, student_id, confidence=confidence)
                 
                 if success:
                     self.last_marked[student_id] = now
-                    logger.info(f"Attendance marked for student {student_id}")
-                    # Reset count after marking
-                    self.consecutive_counts[student_id] = 0
+                    logger.info(f"Attendance marked for student {student_id} (Track: {track_id})")
+                    # Clear evidence for THIS track to prevent re-marking
+                    del self.track_evidence[track_id]
                     return True
-                
             else:
-                # Still in cooldown, just reset count to avoid "spamming" the logic
-                self.consecutive_counts[student_id] = 0
+                # In cooldown, don't clear track evidence but don't mark
+                # (The student might stay in frame, we just wait for cooldown)
+                pass
                 
         return False
 
+    def clean_stale_tracks(self, active_track_ids: Set[int]):
+        """Remove evidence for tracks that are no longer visible."""
+        stale_tracks = set(self.track_evidence.keys()) - active_track_ids
+        for tid in stale_tracks:
+            del self.track_evidence[tid]
+
     def reset_counts_except(self, active_student_ids: Set[int]):
-        """
-        Reset consecutive counts for students not currently in frame.
-        This prevents 'ghost' counts from accumulating over time.
-        """
-        students_to_clear = set(self.consecutive_counts.keys()) - active_student_ids
-        for sid in students_to_clear:
-            self.consecutive_counts[sid] = 0
-            
+        """Compatibility method for main.py."""
+        pass # Now handled by track evidence and cooldowns
+
     def get_session_status(self) -> Dict[str, int]:
-        """Return statistics for the current running session."""
         return {
             "marked_this_session": len(self.last_marked),
-            "tracking_active": len([c for c in self.consecutive_counts.values() if c > 0])
+            "tracking_active": len(self.track_evidence)
         }

@@ -65,12 +65,12 @@ def test_on_folder():
         for face in faces:
             face_crop = detector.extract_face(img, face['box'])
             if face_crop is not None:
-                embedding = recognizer.generate_embedding(face_crop)
+                embeddings = recognizer.generate_embeddings(face_crop)
                 
-                if embedding is not None:
-                    match = recognizer.find_best_match(embedding, known_faces)
+                if embeddings:
+                    match = recognizer.find_best_match(embeddings, known_faces)
                     if match["match_found"]:
-                        print(f"  -> SUCCESS: Recognized as Student ID: {match['student_id']} (Confidence: {1 - match['distance']:.2f})")
+                        print(f"  -> SUCCESS: Recognized as Student ID: {match['student_id']} (Vote Ratio: {match.get('vote_ratio', 0):.2f})")
                     else:
                         print("  -> UNKNOWN: Face detected but not matched to database.")
                 else:

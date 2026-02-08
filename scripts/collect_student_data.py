@@ -15,6 +15,7 @@ from database.crud import AttendanceDB
 from models.face_detector import FaceDetector
 from models.face_recognizer import FaceRecognizer
 from models.embeddings_manager import EmbeddingsManager
+from preprocessing.pipeline import preprocess_frame
 from scripts.generate_embeddings import process_student_images
 
 # Setup logging
@@ -130,35 +131,65 @@ def collect_student_data():
             print(f"\nStudent {first_name} registered successfully with ID {student_id}.")
             print("Press 'c' to capture, 'q' to quit.")
 
-            target_count = 55
+            stages = [
+                {"name": "FRONTAL", "target": 20, "message": "Look directly at the camera."},
+                {"name": "LEFT PROFILE", "target": 15, "message": "Turn your head SLIGHTLY to the LEFT."},
+                {"name": "RIGHT PROFILE", "target": 15, "message": "Turn your head SLIGHTLY to the RIGHT."}
+            ]
+            
+            stage_idx = 0
+            captured_count = 0
 
-            while captured_count < target_count:
-                ret, frame = cap.read()
-                if not ret: break
-
-                display_frame = cv2.flip(frame, 1) if isinstance(source, int) else frame
-                validation = detector.validate_for_enrollment(frame)
+            while stage_idx < len(stages):
+                current_stage = stages[stage_idx]
+                stage_captured = 0
                 
-                status_color = (0, 255, 0) if validation['passed'] else (0, 0, 255)
-                cv2.putText(display_frame, validation['message'], (10, display_frame.shape[0] - 20), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
+                print(f"\n--- STAGE: {current_stage['name']} ---")
+                print(f"Instruction: {current_stage['message']}")
 
-                if validation['face_box']:
-                    x, y, w, h = validation['face_box']
-                    x_disp = display_frame.shape[1] - (x + w) if isinstance(source, int) else x
-                    cv2.rectangle(display_frame, (x_disp, y), (x_disp + w, y + h), status_color, 2)
+                while stage_captured < current_stage['target']:
+                    ret, frame = cap.read()
+                    if not ret: break
 
-                cv2.imshow("Student Enrollment", display_frame)
-                
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'): break
-                elif key in [ord('c'), 32]: # 'c' or Space
-                    if validation['passed']:
-                        face_crop = validation['face_crop']
-                        save_name = f"{student_id}_{captured_count:02d}.jpg"
-                        cv2.imwrite(str(images_dir / save_name), face_crop)
-                        captured_count += 1
-                        print(f"Captured {captured_count}/{target_count}")
+                    display_frame = cv2.flip(frame, 1) if isinstance(source, int) else frame
+                    validation = detector.validate_for_enrollment(frame)
+                    
+                    status_color = (0, 255, 0) if validation['passed'] else (0, 0, 255)
+                    
+                    # UI Overlays
+                    cv2.putText(display_frame, f"STAGE: {current_stage['name']} ({stage_captured}/{current_stage['target']})", 
+                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    cv2.putText(display_frame, current_stage['message'], (10, 60), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                    cv2.putText(display_frame, validation['message'], (10, display_frame.shape[0] - 20), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
+
+                    if validation['face_box']:
+                        x, y, w, h = validation['face_box']
+                        x_disp = display_frame.shape[1] - (x + w) if isinstance(source, int) else x
+                        cv2.rectangle(display_frame, (x_disp, y), (x_disp + w, y + h), status_color, 2)
+
+                    cv2.imshow("Student Enrollment", display_frame)
+                    
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'): 
+                        stage_idx = 99 # Break outer
+                        break
+                    elif key in [ord('c'), 32]: # 'c' or Space
+                        if validation['passed']:
+                            face_crop = validation['face_crop']
+                            
+                            # CRITICAL: Apply same preprocessing as live recognition
+                            processed_face = preprocess_frame(face_crop)
+                            
+                            save_name = f"{student_id}_{captured_count:02d}.jpg"
+                            cv2.imwrite(str(images_dir / save_name), processed_face)
+                            
+                            captured_count += 1
+                            stage_captured += 1
+                            print(f"Captured {stage_captured}/{current_stage['target']} for {current_stage['name']}")
+
+                stage_idx += 1
 
             cap.release()
             cv2.destroyAllWindows()

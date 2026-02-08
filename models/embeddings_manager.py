@@ -71,8 +71,8 @@ class EmbeddingsManager:
         self.embedding_cache = self.db.get_all_embeddings_for_recognition(session)
         self.cache_loaded = True
 
-    def get_all_embeddings(self) -> Dict[int, List[np.ndarray]]:
-        """Return the dictionary of all embeddings (student_id -> [vectors])."""
+    def get_all_embeddings(self) -> Dict[int, Dict[str, List[np.ndarray]]]:
+        """Return the dictionary of all embeddings (student_id -> {model_name: [vectors]})."""
         return self.embedding_cache
 
     def add_embedding(self, session: Session, student_id: int, vector: np.ndarray, model_name: str = "Facenet512"):
@@ -84,8 +84,11 @@ class EmbeddingsManager:
         if success:
             # Update Cache
             if student_id not in self.embedding_cache:
-                self.embedding_cache[student_id] = []
-            self.embedding_cache[student_id].append(vector)
+                self.embedding_cache[student_id] = {}
+            if model_name not in self.embedding_cache[student_id]:
+                self.embedding_cache[student_id][model_name] = []
+                
+            self.embedding_cache[student_id][model_name].append(vector)
             
             # Persist cache update
             self._save_to_pickle()

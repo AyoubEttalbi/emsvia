@@ -1,76 +1,84 @@
 import numpy as np
 from deepface import DeepFace
-from typing import List, Optional, Dict, Union
+from typing import List, Optional, Dict, Union, Any
 import logging
 from scipy.spatial import distance
+from config.settings import (
+    FACE_RECOGNITION_MODEL, 
+    RECOGNITION_THRESHOLD,
+    USE_RECOGNITION_ENSEMBLE,
+    RECOGNITION_MODELS,
+    ENSEMBLE_VOTING_THRESHOLD
+)
 
 logger = logging.getLogger(__name__)
 
 class FaceRecognizer:
     """
     Handles face embedding generation and matching using DeepFace.
+    Supports single model or Ensemble Recognition.
     """
     
-    # Thresholds for Facenet512 (Cosine Distance)
-    # 0.30 is generally recommended for Facenet512 cosine similarity
-    THRESHOLD = 0.30 
+    # Default thresholds for models (Cosine Distance)
+    THRESHOLDS = {
+        "Facenet512": 0.30,
+        "ArcFace": 0.68,
+        "VGG-Face": 0.40,
+        "Facenet": 0.40,
+        "OpenFace": 0.10,
+        "DeepFace": 0.23,
+        "DeepID": 0.01
+    }
     
-    def __init__(self, model_name: str = "Facenet512"):
+    def __init__(self, model_names: List[str] = None):
         """
         Initialize the Face Recognizer.
         
         Args:
-            model_name: DeepFace model to use (default: Facenet512)
+            model_names: List of DeepFace models to use.
         """
-        self.model_name = model_name
-        logger.info(f"FaceRecognizer initialized with model: {model_name}")
+        if model_names:
+            self.model_names = model_names
+        elif USE_RECOGNITION_ENSEMBLE:
+            self.model_names = RECOGNITION_MODELS
+        else:
+            self.model_names = [FACE_RECOGNITION_MODEL]
+            
+        logger.info(f"FaceRecognizer initialized with models: {self.model_names}")
+
+    def generate_embeddings(self, image: np.ndarray) -> Dict[str, np.ndarray]:
+        """
+        Generate face embedding vectors for all models.
+        """
+        results = {}
+        if image is None or image.size == 0:
+            return results
+            
+        for model in self.model_names:
+            try:
+                embedding_objs = DeepFace.represent(
+                    img_path=image,
+                    model_name=model,
+                    enforce_detection=False,
+                    detector_backend="skip"
+                )
+                if embedding_objs:
+                    results[model] = np.array(embedding_objs[0]["embedding"])
+            except Exception as e:
+                logger.error(f"Error generating embedding for {model}: {e}")
+        return results
 
     def generate_embedding(self, image: np.ndarray) -> Optional[np.ndarray]:
         """
-        Generate a face embedding vector for a given aligned face image.
-        
-        Args:
-            image: Aligned face image (BGR)
-            
-        Returns:
-            Numpy array representing the embedding (512-dim for Facenet512) or None if failure.
+        Single embedding generation (backward compatibility).
         """
-        if image is None or image.size == 0:
-            logger.warning("Empty image provided to generate_embedding")
-            return None
-            
-        try:
-            # enforce_detection=False because we assume we are passing an aligned crop
-            embedding_objs = DeepFace.represent(
-                img_path=image,
-                model_name=self.model_name,
-                enforce_detection=False,
-                detector_backend="skip" # We already detected and aligned
-            )
-            
-            if not embedding_objs:
-                return None
-                
-            # DeepFace returns a list of dicts. We expect one since we disabled detection.
-            embedding = embedding_objs[0]["embedding"]
-            return np.array(embedding)
-            
-        except Exception as e:
-            logger.error(f"Error generating embedding: {e}")
-            return None
+        embeddings = self.generate_embeddings(image)
+        # Return first one or None
+        if not embeddings: return None
+        return next(iter(embeddings.values()))
 
     def calculate_distance(self, embedding1: np.ndarray, embedding2: np.ndarray, metric: str = "cosine") -> float:
-        """
-        Calculate distance between two embeddings.
-        
-        Args:
-            embedding1: First embedding vector
-            embedding2: Second embedding vector
-            metric: Distance metric ('cosine', 'euclidean')
-            
-        Returns:
-            Distance value (float). Lower is closer.
-        """
+        """Calculate distance between two embeddings."""
         if metric == "cosine":
             return distance.cosine(embedding1, embedding2)
         elif metric == "euclidean":
@@ -78,43 +86,48 @@ class FaceRecognizer:
         else:
             raise ValueError(f"Unknown metric: {metric}")
 
-    def find_best_match(self, source_embedding: np.ndarray, 
-                        database_embeddings: Dict[int, List[np.ndarray]]) -> Dict[str, Union[int, float, bool]]:
+    def find_best_match(self, source_embeddings: Dict[str, np.ndarray], 
+                        database_embeddings: Dict[int, Dict[str, List[np.ndarray]]]) -> Dict[str, Any]:
         """
-        Find the closest match for a source embedding in a dictionary of database embeddings.
-        
-        Args:
-            source_embedding: The embedding to search for.
-            database_embeddings: Dict mapping student_id -> list of embedding vectors.
+        Find the closest match using Ensemble Voting.
+        """
+        votes = {} # student_id -> score
+        model_results = {} # model_name -> best_match_for_that_model
+
+        for model_name, source_vector in source_embeddings.items():
+            min_dist = float("inf")
+            best_id_for_model = None
             
-        Returns:
-            Dictionary with match results:
-            {
-                'match_found': bool,
-                'student_id': int or None,
-                'min_distance': float
-            }
-        """
-        min_dist = float("inf")
-        best_match_id = None
+            threshold = self.THRESHOLDS.get(model_name, 0.40)
+            
+            for student_id, model_dict in database_embeddings.items():
+                if model_name not in model_dict:
+                    continue
+                    
+                for db_vector in model_dict[model_name]:
+                    dist = self.calculate_distance(source_vector, db_vector, metric="cosine")
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_id_for_model = student_id
+            
+            if best_id_for_model is not None and min_dist <= threshold:
+                model_results[model_name] = {"id": best_id_for_model, "dist": min_dist}
+                votes[best_id_for_model] = votes.get(best_id_for_model, 0) + 1
+            else:
+                model_results[model_name] = {"id": None, "dist": min_dist}
+
+        if not votes:
+            return {"match_found": False, "student_id": None, "confidence": 0.0}
+
+        # Find ID with most votes
+        winner_id = max(votes, key=votes.get)
+        vote_ratio = votes[winner_id] / len(self.model_names)
         
-        for student_id, vectors in database_embeddings.items():
-            for db_vector in vectors:
-                dist = self.calculate_distance(source_embedding, db_vector, metric="cosine")
-                if dist < min_dist:
-                    min_dist = dist
-                    best_match_id = student_id
-        
-        # Verify against threshold
-        if min_dist <= self.THRESHOLD:
-            return {
-                "match_found": True,
-                "student_id": best_match_id,
-                "distance": min_dist
-            }
-        else:
-            return {
-                "match_found": False,
-                "student_id": None,
-                "distance": min_dist
-            }
+        match_found = vote_ratio >= ENSEMBLE_VOTING_THRESHOLD
+
+        return {
+            "match_found": match_found,
+            "student_id": winner_id if match_found else None,
+            "vote_ratio": vote_ratio,
+            "model_results": model_results
+        }

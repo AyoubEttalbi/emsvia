@@ -101,6 +101,50 @@
 - [ ] Generate embedding summary report
 - [x] Phase 4: Data Collection & Preprocessing COMPLETE
 
+## 🚀 HIGH PRIORITY: Accuracy Improvement System
+### Accuracy Phase 1: Preprocessing & Lighting Enhancement
+- [x] Task 1.1: Implement CLAHE Processing (OpenCV createCLAHE, clipLimit=2.0)
+- [x] Task 1.2: Add Exposure Normalization (Gamma correction for mean < 50)
+- [ ] Task 1.3: Integrate Zero-DCE (Optional, for extreme low-light < 30)
+
+### Accuracy Phase 2: Multi-Scale Detection with Tiling
+- [x] Task 2.1: Implement Image Tiling (4 overlapping 1080x1080 tiles)
+  - [x] Coordinate mapping back to original frame
+  - [x] NMS across tiles (IoU 0.4)
+- [x] Task 2.2: Upgrade Detection Model (RetinaFace/SCRFD, min_size=20px)
+
+### Accuracy Phase 3: Ensemble Detection
+- [x] Task 3.1: Implement Multi-Model Detection (RetinaFace + SCRFD + YuNet)
+- [x] Task 3.2: Detection Fusion Strategy
+  - [x] NMS across all detections
+  - [x] Confidence scoring based on agreement
+
+### Accuracy Phase 4: Super-Resolution Enhancement
+- [x] Task 4.1: Implement Selective SR (FSRCNN/EDSR) for small/blurry faces
+  - [x] Integrate OpenCV DNN SuperRes
+  - [x] Add auto-downloader for models
+- [x] Task 4.2: Integration Point (Apply before embedding generation)s, apply before recognition)
+
+### Accuracy Phase 5: Ensemble Recognition
+- [x] Task 5.1: Implement Multi-Model Recognition (ArcFace + Facenet512)
+- [x] Task 5.2: Voting & Consensus logic (Agreement threshold 0.5)
+- [x] Task 5.3: Update DB retrieval for model-specific groupingrequired: 2/3 models)
+
+### Accuracy Phase 6: Temporal Smoothing
+- [x] Task 6.1: Implement Face Tracking (IOU Tracker, track ID persistence)
+- [x] Task 6.2: Evidence Accumulation (Require 5 matches per track)
+- [x] Task 6.3: Track-based stabilization (Reduce flickers)ation for ID switch)
+
+### Accuracy Phase 7: Enhanced Enrollment System
+- [x] Task 7.1: Multi-Angle Enrollment (Front, Left, Right guided)
+- [x] Task 7.2: Enrollment Preprocessing Alignment (Apply CLAHE+Gamma during enrollment)
+- [x] Task 7.3: Multi-Model Enrollment (Simultaneous Facenet512+ArcFace generation)
+
+### Accuracy Phase 8: Complete Pipeline Integration
+- [x] Task 8.1: End-to-End Pipeline (Preprocessing -> Tiled Detection -> SR -> Ensemble Rec -> Tracking)
+- [x] Task 8.2: Performance Optimization (Recognition every N frames)
+- [x] Task 8.3: Visual Debug Mode (Show tracking vs recognition states)bugging (Time breakdown, confidence stats)
+
 ## Phase 5: Attendance Management System
 ### 5.1 Camera Handling
 - [x] Implement CameraHandler class (core/camera_handler.py)

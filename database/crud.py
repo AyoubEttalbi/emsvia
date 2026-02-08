@@ -101,14 +101,20 @@ class AttendanceDB:
             })
         return result
 
-    def get_all_embeddings_for_recognition(self, session: Session) -> Dict[int, List[np.ndarray]]:
-        """Load all embeddings into memory for the recognizer (student_id: [vectors])."""
+    def get_all_embeddings_for_recognition(self, session: Session) -> Dict[int, Dict[str, List[np.ndarray]]]:
+        """Load all embeddings into memory for the recognizer (student_id: {model_name: [vectors]})."""
         all_embeddings = session.query(FaceEmbedding).all()
         db_embeddings = {}
         for emb in all_embeddings:
-            if emb.student_id not in db_embeddings:
-                db_embeddings[emb.student_id] = []
-            db_embeddings[emb.student_id].append(np.array(json.loads(emb.embedding_vector)))
+            sid = emb.student_id
+            mname = emb.model_name or "Facenet512" # Fallback for legacy data
+            
+            if sid not in db_embeddings:
+                db_embeddings[sid] = {}
+            if mname not in db_embeddings[sid]:
+                db_embeddings[sid][mname] = []
+                
+            db_embeddings[sid][mname].append(np.array(json.loads(emb.embedding_vector)))
         return db_embeddings
 
     # --- Attendance Operations ---

@@ -3,6 +3,7 @@ import logging
 import time
 import sys
 import threading
+import numpy as np
 from pathlib import Path
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,8 @@ from models.embeddings_manager import EmbeddingsManager
 from core.camera_handler import CameraHandler
 from core.attendance_manager import AttendanceManager
 from core.unknown_face_handler import UnknownFaceHandler
+from core.tracker import FaceTracker
+from config.settings import IDENTITY_STABILITY_THRESHOLD, MIN_BUFFER_FOR_RECOG, RECOGNITION_MODELS
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -46,6 +49,7 @@ def main():
     camera = CameraHandler(source=0).start()
     attend_mgr = AttendanceManager(db_manager)
     unknown_mgr = UnknownFaceHandler(db_manager)
+    tracker = FaceTracker()
     
     logger.info("All components initialized. Running main loop.")
     
@@ -58,72 +62,100 @@ def main():
                 
             display_frame = camera.preprocess_frame(frame)
             
-            # 3. Process frame (every few frames or based on logic)
-            # For simplicity, we process every frame here, but MTCNN is heavy.
-            # In a production app, we might use a faster tracker or skip frames.
+            # 3. Process frame
+            # Optimization: Recognition is expensive. We track every frame, 
+            # but only run Recognition/SR every N frames per track.
+            RECOGNITION_INTERVAL = 10 # frames
+            DEBUG_MODE = True # Set to False for production
             
             faces = detector.detect_faces(frame)
+            tracked_faces = tracker.update(faces)
             active_student_ids = set()
+            active_track_ids = {f['track_id'] for f in tracked_faces}
             
-            for face in faces:
+            for face in tracked_faces:
                 x, y, w, h = face['box']
-                confidence = face['confidence']
+                tid = face['track_id']
+                track_data = tracker.tracks[tid]
+                track_data['frame_count'] += 1
                 
-                # Draw bounding box (mirrored for display)
+                # UI Defaults
                 x_disp = display_frame.shape[1] - (x + w)
-                color = (0, 255, 0)
+                color = (255, 0, 0) # Default tracking color
+                label = f"Track: {tid}"
                 
-                # 4. Recognition
+                # 4. Extract and Buffer Embeddings (Every frame if quality OK)
                 face_crop = detector.extract_face(frame, [x, y, w, h])
                 if face_crop is not None:
-                    # Quality check for recognition
                     quality = detector.check_image_quality(face_crop)
-                    
                     if quality['passed']:
-                        current_embedding = recognizer.generate_embedding(face_crop)
-                        
-                        if current_embedding is not None:
-                            # Compare with known embeddings
-                            all_known = em_manager.get_all_embeddings()
-                            match_result = recognizer.find_best_match(current_embedding, all_known)
-                            
-                            if match_result["match_found"]:
-                                student_id = match_result["student_id"]
-                                dist = match_result["distance"]
-                                
-                                # Resolve student name from ID (using internal cache or quick DB lookups)
-                                # For now, just show ID
-                                label = f"ID: {student_id} (D:{dist:.2f})"
-                                color = (0, 255, 0)
-                                active_student_ids.add(student_id)
-                                
-                                # 5. Attendance Logic
-                                # confidence = 1.0 - distance (clamped to 0-1 range)
-                                confidence = max(0.0, min(1.0, 1.0 - dist))
-                                session = db_manager.get_session()
-                                attend_mgr.process_recognition(session, student_id, confidence=confidence)
-                                session.close()
-                                
-                            else:
-                                label = "Unknown"
-                                color = (0, 0, 255)
-                                # 6. Unknown Face Logic
-                                session = db_manager.get_session()
-                                unknown_mgr.handle_unknown_face(session, face_crop, confidence=confidence)
-                                session.close()
-                        else:
-                            label = "Recog Failed"
+                        current_embeddings = recognizer.generate_embeddings(face_crop)
+                        if current_embeddings:
+                            for model_name, emb in current_embeddings.items():
+                                if model_name in track_data['embeddings_buffer']:
+                                    track_data['embeddings_buffer'][model_name].append(emb)
+
+                # 5. Averaging & Recognition
+                # Check if we have enough samples in the buffer for the first model
+                first_model = RECOGNITION_MODELS[0]
+                if len(track_data['embeddings_buffer'].get(first_model, [])) >= MIN_BUFFER_FOR_RECOG:
+                    # Average embeddings
+                    avg_embeddings = {}
+                    for model_name, buffer in track_data['embeddings_buffer'].items():
+                        if len(buffer) > 0:
+                            avg_embeddings[model_name] = np.mean(list(buffer), axis=0)
+                    
+                    # Recognize based on averaged embeddings
+                    all_known = em_manager.get_all_embeddings()
+                    match_result = recognizer.find_best_match(avg_embeddings, all_known)
+                    track_data['last_match'] = match_result # For UI diagnostics
+
+                    # 6. Identity Stability Rule
+                    new_identity = match_result["student_id"] if match_result["match_found"] else None
+                    
+                    if new_identity != track_data['current_identity']:
+                        track_data['identity_stability_counter'] += 1
+                        if track_data['identity_stability_counter'] >= IDENTITY_STABILITY_THRESHOLD:
+                            track_data['current_identity'] = new_identity
+                            track_data['identity_stability_counter'] = 0
                     else:
-                        label = "Low Quality"
-                        color = (0, 255, 255)
+                        track_data['identity_stability_counter'] = 0
+
+                # 7. Apply Stable Identity
+                stable_id = track_data['current_identity']
+                if stable_id is not None:
+                    label = f"ID: {stable_id} (T:{tid})"
+                    color = (0, 255, 0)
+                    active_student_ids.add(stable_id)
+                    
+                    # Attendance Logic (Temporal evidence already handled by averaging/stability)
+                    session = db_manager.get_session()
+                    attend_mgr.process_recognition(session, stable_id, track_id=tid, confidence=1.0)
+                    session.close()
+                else:
+                    # If confirmed None and buffer full, it's truly Unknown
+                    if len(track_data['embeddings_buffer'].get(first_model, [])) >= MIN_BUFFER_FOR_RECOG:
+                        label = f"Unknown (T:{tid})"
+                        color = (0, 0, 255)
+                        # Periodic unknown handling
+                        if track_data['frame_count'] % 30 == 0 and face_crop is not None:
+                            session = db_manager.get_session()
+                            unknown_mgr.handle_unknown_face(session, face_crop, confidence=0.0)
+                            session.close()
+
+                # Visual Debug Info
+                if DEBUG_MODE:
+                    buffer_len = len(track_data['embeddings_buffer'].get(first_model, []))
+                    cv2.putText(display_frame, f"Buf: {buffer_len} | Stab: {track_data['identity_stability_counter']}", 
+                                (x_disp, y + h + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
                 # Draw UI overlays
                 cv2.rectangle(display_frame, (x_disp, y), (x_disp + w, y + h), color, 2)
                 cv2.putText(display_frame, label, (x_disp, y - 10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-            # Reset counts for students who left the frame
-            attend_mgr.reset_counts_except(active_student_ids)
+            # Clean up stale tracks in manager
+            attend_mgr.clean_stale_tracks(active_track_ids)
 
             # Dashboard Info
             fps = camera.get_fps()

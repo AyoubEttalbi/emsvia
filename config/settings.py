@@ -22,7 +22,7 @@ for directory in [DATA_DIR, STUDENT_IMAGES_DIR, EMBEDDINGS_DIR, UNKNOWN_FACES_DI
     directory.mkdir(parents=True, exist_ok=True)
 
 # Model settings
-FACE_DETECTION_MODEL = os.getenv("FACE_DETECTION_MODEL", "mtcnn")
+FACE_DETECTION_MODEL = os.getenv("FACE_DETECTION_MODEL", "retinaface")
 FACE_RECOGNITION_MODEL = os.getenv("FACE_RECOGNITION_MODEL", "Facenet512")
 DETECTION_CONFIDENCE = float(os.getenv("DETECTION_CONFIDENCE", "0.9"))
 RECOGNITION_THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.6"))
@@ -54,3 +54,45 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
 # API Settings
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))
+
+# --- Accuracy Improvement Settings ---
+# Phase 1: Preprocessing
+CLAHE_CLIP_LIMIT = float(os.getenv("CLAHE_CLIP_LIMIT", "2.0"))
+CLAHE_TILE_GRID_SIZE = (8, 8)
+DARK_THRESHOLD = int(os.getenv("DARK_THRESHOLD", "50"))
+GAMMA_CORRECTION = float(os.getenv("GAMMA_CORRECTION", "2.2"))
+ENABLE_ZERO_DCE = os.getenv("ENABLE_ZERO_DCE", "False").lower() == "true"
+# Phase 2: Multi-Scale Detection
+USE_TILING = os.getenv("USE_TILING", "True").lower() == "true"
+TILE_SIZE = (1080, 1080)
+TILE_OVERLAP = float(os.getenv("TILE_OVERLAP", "0.2"))
+NMS_IOU_THRESHOLD = float(os.getenv("NMS_IOU_THRESHOLD", "0.4"))
+MIN_FACE_SIZE_DETECTION = int(os.getenv("MIN_FACE_SIZE_DETECTION", "20"))
+
+# Phase 3: Ensemble Detection
+USE_ENSEMBLE = os.getenv("USE_ENSEMBLE", "True").lower() == "true"
+ENSEMBLE_DETECTORS = os.getenv("ENSEMBLE_DETECTORS", "retinaface,mtcnn").split(",")
+
+# Phase 4: Super-Resolution
+USE_SUPER_RESOLUTION = os.getenv("USE_SUPER_RESOLUTION", "True").lower() == "true"
+SR_MODEL = os.getenv("SR_MODEL", "FSRCNN") # Options: FSRCNN, EDSR
+SR_SCALE = int(os.getenv("SR_SCALE", "4"))
+SR_MIN_SIZE = int(os.getenv("SR_MIN_SIZE", "64")) # Enhance faces smaller than this
+
+# Phase 5: Ensemble Recognition
+USE_RECOGNITION_ENSEMBLE = os.getenv("USE_RECOGNITION_ENSEMBLE", "True").lower() == "true"
+RECOGNITION_MODELS = os.getenv("RECOGNITION_MODELS", "Facenet512,ArcFace,VGG-Face").split(",")
+ENSEMBLE_VOTING_THRESHOLD = float(os.getenv("ENSEMBLE_VOTING_THRESHOLD", "0.5"))
+
+# Phase 6: Temporal Smoothing
+TRACKING_MAX_DISAPPEARED = int(os.getenv("TRACKING_MAX_DISAPPEARED", "10"))
+ATTENDANCE_MIN_CONSISTENCY = int(os.getenv("ATTENDANCE_MIN_CONSISTENCY", "5"))
+TRACKER_IOU_THRESHOLD = float(os.getenv("TRACKER_IOU_THRESHOLD", "0.3"))
+IDENTITY_STABILITY_THRESHOLD = int(os.getenv("IDENTITY_STABILITY_THRESHOLD", "3"))
+EMBEDDING_BUFFER_SIZE = 10
+MIN_BUFFER_FOR_RECOG = 5
+
+
+
+
+

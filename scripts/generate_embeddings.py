@@ -30,16 +30,19 @@ def process_student_images(session, student, student_dir, recognizer, em_manager
         return 0, 0
 
     success_count = 0
+    total_embeddings = 0
     for img_path in tqdm(image_files, desc=f"  Generating embeddings for {student_id}"):
         img = cv2.imread(str(img_path))
         if img is None:
             continue
 
-        # Generate embedding
-        embedding = recognizer.generate_embedding(img)
-        if embedding is not None:
-            # Save to DB and Cache
-            em_manager.add_embedding(session, student.id, embedding)
+        # Generate embeddings for ALL active models
+        embeddings_dict = recognizer.generate_embeddings(img)
+        if embeddings_dict:
+            for model_name, vector in embeddings_dict.items():
+                # Save to DB and Cache
+                if em_manager.add_embedding(session, student.id, vector, model_name=model_name):
+                    total_embeddings += 1
             success_count += 1
     
     return success_count, len(image_files)
