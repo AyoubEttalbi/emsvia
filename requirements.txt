@@ -42,6 +42,7 @@ scipy
 python-dateutil
 pytz
 tqdm
+requests
 
 # Testing
 pytest
