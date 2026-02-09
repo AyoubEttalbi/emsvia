@@ -4,13 +4,11 @@ A real-time face recognition system for automatic student attendance marking usi
 
 ## Features
 
-- **Real-time Face Detection**: Uses MTCNN for accurate face detection
-- **Face Recognition**: DeepFace with Facenet512 for high-accuracy recognition (>95%)
+- **GPU Accelerated Pipeline**: Uses NVIDIA CUDA for high-performance detection and recognition
+- **Real-time Face Detection**: Uses MTCNN & RetinaFace ensemble for superior accuracy
+- **Face Recognition**: DeepFace with multi-model ensemble (Facenet512, ArcFace, VGG-Face)
+- **Super-Resolution**: Enhancement of small faces using deep learning models
 - **Automatic Attendance**: Mark attendance automatically with deduplication
-- **Student Management**: Easy enrollment and management of students
-- **Admin Dashboard**: Streamlit-based web interface for system management
-- **REST API**: FastAPI backend for integration with other systems
-- **Unknown Face Handling**: Automatically save and review unrecognized faces
 
 ## System Requirements
 
@@ -18,7 +16,7 @@ A real-time face recognition system for automatic student attendance marking usi
 - Camera (USB webcam or built-in laptop camera)
 - Minimum 8GB RAM
 - CPU: Intel i5 / AMD Ryzen 5 or better
-- GPU: Optional but recommended (NVIDIA with CUDA support)
+- GPU: **NVIDIA GeForce GTX 1050 (Verified & Enabled)**
 
 ### Software
 - Python 3.9 or higher

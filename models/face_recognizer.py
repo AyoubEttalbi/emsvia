@@ -54,7 +54,12 @@ class FaceRecognizer:
         if image is None or image.size == 0:
             return results
             
-        for model in self.model_names:
+        from models.gpu_manager import GPUModelManager
+        gpu_mgr = GPUModelManager()
+        
+        models_to_run = self.model_names
+            
+        for model in models_to_run:
             try:
                 embedding_objs = DeepFace.represent(
                     img_path=image,
@@ -101,7 +106,7 @@ class FaceRecognizer:
             threshold = self.THRESHOLDS.get(model_name, 0.40)
             
             for student_id, model_dict in database_embeddings.items():
-                if model_name not in model_dict:
+                if not isinstance(model_dict, dict) or model_name not in model_dict:
                     continue
                     
                 for db_vector in model_dict[model_name]:
@@ -121,9 +126,21 @@ class FaceRecognizer:
 
         # Find ID with most votes
         winner_id = max(votes, key=votes.get)
-        vote_ratio = votes[winner_id] / len(self.model_names)
+        num_models_run = len(source_embeddings)
+        vote_ratio = votes[winner_id] / num_models_run if num_models_run > 0 else 0
         
+        # Adaptive Baseline: Ensemble vote
         match_found = vote_ratio >= ENSEMBLE_VOTING_THRESHOLD
+        
+        # Override: If any model is SUPER confident, trust it!
+        # This helps if 2 models fail but 1 is 100% sure.
+        for model_name, res in model_results.items():
+            threshold = self.THRESHOLDS.get(model_name, 0.40)
+            if res["id"] is not None and res["dist"] <= (threshold * 0.7):
+                match_found = True
+                winner_id = res["id"]
+                logger.info(f"Strong match override for {model_name}: {winner_id} (dist: {res['dist']:.3f})")
+                break
 
         return {
             "match_found": match_found,

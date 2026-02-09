@@ -12,11 +12,14 @@ from config.settings import (
     NMS_IOU_THRESHOLD,
     MIN_FACE_SIZE_DETECTION,
     USE_ENSEMBLE,
-    ENSEMBLE_DETECTORS
+    ENSEMBLE_DETECTORS,
+    USE_GPU, 
+    DEVICE
 )
 from detection.tiling import get_tiles, map_to_original, apply_nms
 from detection.ensemble_detection import fuse_detections
 from enhancement.super_resolution import FaceEnhancer
+from detection.retinaface_onnx import RetinaFaceONNX
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -27,27 +30,67 @@ class FaceDetector:
     Includes support for image tiling to detect small faces.
     """
     
-    def __init__(self, model_name: str = None, min_confidence: float = None):
+    def __init__(self, backend: str = None, min_confidence: float = None):
         """
         Initialize the Face Detector.
-        
-        Args:
-            model_name: Backend detection model (retinaface, mtcnn, opencv, etc.)
-            min_confidence: Minimum confidence threshold (0.0 to 1.0)
         """
-        self.model_name = model_name or FACE_DETECTION_MODEL
+        self.backend = backend or FACE_DETECTION_MODEL
         self.min_confidence = min_confidence or DETECTION_CONFIDENCE
         self.min_face_size = (MIN_FACE_SIZE_DETECTION, MIN_FACE_SIZE_DETECTION)
         
-        # Initialize Enhancer
+        # Initialize Enhancer & raw OpenCV Cascade
         self.enhancer = FaceEnhancer()
+        self.face_cascade = None
+        if self.backend == "opencv":
+            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            self.face_cascade = cv2.CascadeClassifier(cascade_path)
+            
+        # Initialize ONNX detector if GPU is enabled
+        self.onnx_detector = None
+        if USE_GPU and self.backend == "retinaface":
+            self.onnx_detector = RetinaFaceONNX(device=DEVICE)
+            if not self.onnx_detector.is_ready():
+                logger.info("Falling back to DeepFace RetinaFace (ONNX not ready)")
         
-        logger.info(f"FaceDetector initialized with backend: {self.model_name}")
+        logger.info(f"FaceDetector initialized with backend: {self.backend}")
 
     def detect_only_model(self, image: np.ndarray, backend: str) -> List[Dict[str, Any]]:
         """
         Internal method to run a specific detection model.
         """
+        # RAW OPENCV PATH (High Speed)
+        if backend == "opencv" and self.face_cascade is not None:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            # Detect faces
+            faces = self.face_cascade.detectMultiScale(
+                gray, 
+                scaleFactor=1.1, 
+                minNeighbors=5, 
+                minSize=self.min_face_size
+            )
+            detections = []
+            for (x, y, w, h) in faces:
+                detections.append({
+                    'box': [int(x), int(y), int(w), int(h)],
+                    'confidence': 1.0, # Haar doesn't provide easy confidence
+                    'model': 'opencv_raw'
+                })
+            return detections
+
+        # Use ONNX if available and backend matches
+        if backend == "retinaface" and self.onnx_detector and self.onnx_detector.is_ready():
+            try:
+                # This is faster than DeepFace.extract_faces for batch processing
+                detections = self.onnx_detector.detect(image, threshold=self.min_confidence)
+                if detections:
+                    # Add model name to detections from ONNX
+                    for det in detections:
+                        det['model'] = 'retinaface_onnx'
+                    return detections
+            except Exception as e:
+                logger.error(f"ONNX detection error, falling back: {e}")
+
+        # Standard DeepFace fallback
         try:
             results = DeepFace.extract_faces(
                 img_path=image,
@@ -58,20 +101,16 @@ class FaceDetector:
             
             detections = []
             for res in results:
-                area = res['facial_area']
-                conf = res['confidence']
-                
-                if conf < self.min_confidence:
-                    continue
-                    
-                detections.append({
-                    'box': [area['x'], area['y'], area['w'], area['h']],
-                    'confidence': conf,
-                    'model': backend
-                })
+                if res['confidence'] >= self.min_confidence:
+                    detections.append({
+                        'box': [res['facial_area']['x'], res['facial_area']['y'], 
+                               res['facial_area']['w'], res['facial_area']['h']],
+                        'confidence': res['confidence'],
+                        'model': backend
+                    })
             return detections
         except Exception as e:
-            logger.error(f"Error in {backend} detection: {e}")
+            logger.error(f"DeepFace detection error: {e}")
             return []
 
     def detect_faces(self, image: np.ndarray, use_tiling: bool = None, use_ensemble: bool = None) -> List[Dict[str, Any]]:
@@ -81,11 +120,21 @@ class FaceDetector:
         if image is None or image.size == 0:
             return []
 
+        from models.gpu_manager import GPUModelManager
+        gpu_mgr = GPUModelManager()
+        
         should_tile = use_tiling if use_tiling is not None else USE_TILING
         should_ensemble = use_ensemble if use_ensemble is not None else USE_ENSEMBLE
         
+        # AUTO-SCALE: Disable heavy features on CPU
+        if not gpu_mgr.is_gpu_ready():
+            if should_tile or should_ensemble:
+                 # Only log once or silently override
+                 should_tile = False
+                 should_ensemble = False
+
         # Determine which models to run
-        models_to_run = ENSEMBLE_DETECTORS if should_ensemble else [self.model_name]
+        models_to_run = ENSEMBLE_DETECTORS if should_ensemble else [self.backend]
         
         all_detections = []
         
@@ -142,8 +191,11 @@ class FaceDetector:
         if target_size:
             # Check if we should ENHANCE before resizing
             # If face is small (< 64px) and we are resizing up to 160px, use SR
+            # OPTIMIZATION: Only use SR if GPU is available to prevent UI freezing
             h, w = face_crop.shape[:2]
-            if w < 64 or h < 64:
+            from models.gpu_manager import GPUModelManager
+            gpu_mgr = GPUModelManager()
+            if (w < 64 or h < 64) and gpu_mgr.is_gpu_ready():
                  face_crop = self.enhancer.enhance_face(face_crop)
             
             return cv2.resize(face_crop, target_size, interpolation=cv2.INTER_AREA)
@@ -159,16 +211,20 @@ class FaceDetector:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
         results["blur_score"] = blur_score
-        if blur_score < 100:
+        
+        # Extremely loose for low-end webcams
+        if blur_score < 5: 
             results["is_blurry"] = True
             results["passed"] = False
+            
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         avg_brightness = np.mean(hsv[:, :, 2])
         results["brightness"] = avg_brightness
-        if avg_brightness < 40:
+        
+        if avg_brightness < 30:
             results["is_too_dark"] = True
             results["passed"] = False
-        elif avg_brightness > 220:
+        elif avg_brightness > 235:
             results["is_too_bright"] = True
             results["passed"] = False
         return results

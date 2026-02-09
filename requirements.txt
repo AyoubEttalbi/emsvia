@@ -2,7 +2,7 @@
 # Python 3.12+ compatible (Pins removed for build success)
 
 # Computer Vision & Image Processing
-opencv-python
+opencv-contrib-python
 Pillow
 
 # Face Detection
@@ -48,3 +48,20 @@ requests
 pytest
 pytest-cov
 httpx
+
+# GPU Acceleration & Advanced Models
+# PyTorch with CUDA support (install separately via pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118)
+# torch - Install via: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# torchvision
+# torchaudio
+
+# ONNX Runtime with GPU
+onnxruntime-gpu
+
+# Super-Resolution & Enhancement
+gfpgan
+realesrgan
+basicsr
+
+# Additional GPU utilities
+nvidia-ml-py3

@@ -24,7 +24,7 @@ class EmbeddingsManager:
         """
         self.db = db_manager
         self.cache_file = Path(cache_file)
-        self.embedding_cache: Dict[int, List[np.ndarray]] = {}
+        self.embedding_cache: Dict[int, Dict[str, List[np.ndarray]]] = {}
         self.cache_loaded = False
         
         # Ensure directory exists

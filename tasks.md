@@ -12,7 +12,7 @@
 - [x] Initialize Git repository with proper .gitignore
 - [x] Create data directories with proper permissions
 - [x] Verify library functionality (OpenCV, DeepFace, TensorFlow)
-- [x] Test GPU availability (Checked: Not Available)
+- [x] Test GPU availability (Verified & Enabled: NVIDIA GTX 1050)
 - [x] Verify camera access (WSL needs usbipd for hardware access)
 
 ## Phase 2: Database Layer
@@ -174,14 +174,14 @@
 - [ ] Add periodic cleanup of old unknown faces
 
 ### 5.4 Main Application
-- [/] Create main application loop (main.py)
-- [/] Implement real-time video processing
-- [/] Add visual feedback (bounding boxes, labels)
-- [ ] Implement keyboard controls (pause, resume, exit)
+- [x] Create main application loop (main.py)
+- [x] Implement real-time video processing
+- [x] Add visual feedback (bounding boxes, labels)
+- [x] Implement keyboard controls (pause, resume, exit)
 - [ ] Add performance monitoring dashboard
 - [ ] Implement alert system for failures
 - [ ] Add session logging (start/stop times)
-- [/] Test with live camera feed
+- [x] Test with live camera feed
 
 ## Phase 6: Mask & Glasses Handling (Advanced)
 ### 6.1 Mask Detection
