@@ -54,8 +54,12 @@ class AttendanceDB:
             return None
 
     def get_student_by_id(self, session: Session, student_id: str) -> Optional[Student]:
-        """Retrieve a student by their unique student_id string."""
+        """Retrieve a student by their unique student_id string (e.g., 'STU001')."""
         return session.query(Student).filter(Student.student_id == student_id).first()
+
+    def get_student_by_pk(self, session: Session, pk: int) -> Optional[Student]:
+        """Retrieve a student by their integer database primary key."""
+        return session.query(Student).filter(Student.id == pk).first()
 
     def get_all_students(self, session: Session, active_only: bool = True) -> List[Student]:
         """Retrieve all students."""

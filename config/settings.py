@@ -22,8 +22,8 @@ for directory in [DATA_DIR, STUDENT_IMAGES_DIR, EMBEDDINGS_DIR, UNKNOWN_FACES_DI
     directory.mkdir(parents=True, exist_ok=True)
 
 # Model settings
-FACE_DETECTION_MODEL = os.getenv("FACE_DETECTION_MODEL", "retinaface")
-FACE_RECOGNITION_MODEL = os.getenv("FACE_RECOGNITION_MODEL", "Facenet512")
+FACE_DETECTION_MODEL = os.getenv("FACE_DETECTION_MODEL", "opencv")
+FACE_RECOGNITION_MODEL = os.getenv("FACE_RECOGNITION_MODEL", "ArcFace")
 DETECTION_CONFIDENCE = float(os.getenv("DETECTION_CONFIDENCE", "0.9"))
 RECOGNITION_THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.6"))
 DISTANCE_METRIC = os.getenv("DISTANCE_METRIC", "cosine")
@@ -60,28 +60,31 @@ API_PORT = int(os.getenv("API_PORT", "8000"))
 CLAHE_CLIP_LIMIT = float(os.getenv("CLAHE_CLIP_LIMIT", "2.0"))
 CLAHE_TILE_GRID_SIZE = (8, 8)
 DARK_THRESHOLD = int(os.getenv("DARK_THRESHOLD", "50"))
+BLUR_THRESHOLD = float(os.getenv("BLUR_THRESHOLD", "100.0"))
 GAMMA_CORRECTION = float(os.getenv("GAMMA_CORRECTION", "2.2"))
 ENABLE_ZERO_DCE = os.getenv("ENABLE_ZERO_DCE", "False").lower() == "true"
 # Phase 2: Multi-Scale Detection
-USE_TILING = os.getenv("USE_TILING", "True").lower() == "true"
+USE_TILING = os.getenv("USE_TILING", "False").lower() == "true"
 TILE_SIZE = (1080, 1080)
 TILE_OVERLAP = float(os.getenv("TILE_OVERLAP", "0.2"))
 NMS_IOU_THRESHOLD = float(os.getenv("NMS_IOU_THRESHOLD", "0.4"))
 MIN_FACE_SIZE_DETECTION = int(os.getenv("MIN_FACE_SIZE_DETECTION", "20"))
 
 # Phase 3: Ensemble Detection
-USE_ENSEMBLE = os.getenv("USE_ENSEMBLE", "True").lower() == "true"
+USE_ENSEMBLE = os.getenv("USE_ENSEMBLE", "False").lower() == "true"
 ENSEMBLE_DETECTORS = os.getenv("ENSEMBLE_DETECTORS", "retinaface,mtcnn").split(",")
 
 # Phase 4: Super-Resolution
 USE_SUPER_RESOLUTION = os.getenv("USE_SUPER_RESOLUTION", "True").lower() == "true"
 SR_MODEL = os.getenv("SR_MODEL", "FSRCNN") # Options: FSRCNN, EDSR
 SR_SCALE = int(os.getenv("SR_SCALE", "4"))
-SR_MIN_SIZE = int(os.getenv("SR_MIN_SIZE", "64")) # Enhance faces smaller than this
+SR_MIN_SIZE = int(os.getenv("SR_MIN_SIZE", "60")) # Enhance faces smaller than this
+SR_MODE = os.getenv("SR_MODE", "on_failure")
+SR_CONFIDENCE_THRESHOLD = float(os.getenv("SR_CONFIDENCE_THRESHOLD", "0.5"))
 
 # Phase 5: Ensemble Recognition
 USE_RECOGNITION_ENSEMBLE = os.getenv("USE_RECOGNITION_ENSEMBLE", "True").lower() == "true"
-RECOGNITION_MODELS = os.getenv("RECOGNITION_MODELS", "Facenet512,ArcFace,VGG-Face").split(",")
+RECOGNITION_MODELS = os.getenv("RECOGNITION_MODELS", "ArcFace").split(",")
 ENSEMBLE_VOTING_THRESHOLD = float(os.getenv("ENSEMBLE_VOTING_THRESHOLD", "0.5"))
 
 # Phase 6: Temporal Smoothing

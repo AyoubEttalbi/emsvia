@@ -158,14 +158,17 @@ class FaceDetector:
         if image is None: return {"passed": False}
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+        # Use configurable thresholds
+        from config.settings import DARK_THRESHOLD, BLUR_THRESHOLD
+        
         results["blur_score"] = blur_score
-        if blur_score < 100:
+        if blur_score < BLUR_THRESHOLD:
             results["is_blurry"] = True
             results["passed"] = False
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         avg_brightness = np.mean(hsv[:, :, 2])
         results["brightness"] = avg_brightness
-        if avg_brightness < 40:
+        if avg_brightness < DARK_THRESHOLD:
             results["is_too_dark"] = True
             results["passed"] = False
         elif avg_brightness > 220:

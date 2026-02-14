@@ -98,19 +98,50 @@ class FaceRecognizer:
             min_dist = float("inf")
             best_id_for_model = None
             
-            threshold = self.THRESHOLDS.get(model_name, 0.40)
+            # Use the configurable threshold from settings instead of hardcoded values
+            threshold = RECOGNITION_THRESHOLD
+            
+            # Consensus Matching Logic
+            # Instead of taking the single best match, we count how many embeddings for this person
+            # are within the threshold. This filters out "bad apples".
+            
+            potential_matches = {} # student_id -> count of passing vectors
             
             for student_id, model_dict in database_embeddings.items():
                 if model_name not in model_dict:
                     continue
-                    
+                
+                passing_vectors = 0
+                total_vectors = len(model_dict[model_name])
+                
                 for db_vector in model_dict[model_name]:
                     dist = self.calculate_distance(source_vector, db_vector, metric="cosine")
-                    if dist < min_dist:
-                        min_dist = dist
-                        best_id_for_model = student_id
-            
-            if best_id_for_model is not None and min_dist <= threshold:
+                    
+                    if dist <= threshold:
+                        passing_vectors += 1
+                        # Track minimum distance for tie-breaking
+                        if dist < min_dist:
+                            min_dist = dist
+                            best_id_for_model = student_id
+                
+                # CONSENSUS RULE:
+                # Require > 20% of total vectors to match to confirm identity.
+                # This filters out "bad apple" embeddings that match everyone.
+                
+                match_ratio = passing_vectors / total_vectors if total_vectors > 0 else 0
+                
+                # Minimum requirement: 2 matches OR 20% of total
+                required_matches = max(2, int(total_vectors * 0.20))
+                
+                if passing_vectors >= required_matches:
+                    potential_matches[student_id] = passing_vectors
+                    # logger.info(f"Candidate {student_id} confirmed: {passing_vectors}")
+                else:
+                    if passing_vectors > 0:
+                        pass # logger.debug(f"Rejecting {student_id}: {passing_vectors}/{total_vectors} (< 20%)")
+
+            # After checking all students, if we have a best_id, ensure it passed consensus
+            if best_id_for_model in potential_matches:
                 model_results[model_name] = {"id": best_id_for_model, "dist": min_dist}
                 votes[best_id_for_model] = votes.get(best_id_for_model, 0) + 1
             else:

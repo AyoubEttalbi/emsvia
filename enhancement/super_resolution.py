@@ -78,3 +78,34 @@ class FaceEnhancer:
                 return face_img
                 
         return face_img
+
+    def enhance_if_needed(self, face_crop: np.ndarray, face_size: tuple, previous_confidence: float = None) -> np.ndarray:
+        """
+        Only apply SR when necessary based on optimized criteria.
+        """
+        if not self.enabled or face_crop is None:
+            return face_crop
+
+        input_h, input_w = face_crop.shape[:2]
+        min_dim = min(input_h, input_w)
+
+        # Case 1: Face is very small
+        if min_dim < self.min_size:
+            # logger.debug(f"Enhancing small face: {min_dim}px")
+            return self.enhance_face(face_crop)
+        
+        # Case 2: Previous recognition had low confidence (if provided)
+        # Note: We use settings.SR_CONFIDENCE_THRESHOLD if passed, else just skip
+        from config.settings import SR_CONFIDENCE_THRESHOLD
+        if previous_confidence is not None and previous_confidence < SR_CONFIDENCE_THRESHOLD:
+             # logger.debug(f"Enhancing low confidence face: {previous_confidence:.2f}")
+             return self.enhance_face(face_crop)
+
+        # Case 3: Face is blurry (Laplacian variance check)
+        gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+        blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+        if blur_score < 100: # Threshold for blur
+             # logger.debug(f"Enhancing blurry face: {blur_score:.1f}")
+             return self.enhance_face(face_crop)
+        
+        return face_crop

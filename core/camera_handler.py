@@ -99,4 +99,17 @@ class CameraHandler:
         if flip_horizontal:
             frame = cv2.flip(frame, 1)
             
+        # Apply Low Light Enhancement (CLAHE)
+        # Convert to LAB color space
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        
+        # Apply CLAHE to L-channel
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        cl = clahe.apply(l)
+        
+        # Merge and convert back to BGR
+        limg = cv2.merge((cl, a, b))
+        frame = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+            
         return frame

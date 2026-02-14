@@ -104,3 +104,22 @@ class FaceTracker:
         }
         detection['track_id'] = tid
         self.next_track_id += 1
+
+    def predict(self):
+        """
+        Predict next positions. For IOU tracker, we assume static motion 
+        (or constant velocity if we enhanced it, but static for now).
+        This method is called when detection is skipped.
+        """
+        pass
+
+    def get_tracks(self):
+        """
+        Return the list of active tracks with track_id included.
+        """
+        active_tracks = []
+        for tid, data in self.tracks.items():
+            track_info = data.copy()
+            track_info['track_id'] = tid
+            active_tracks.append(track_info)
+        return active_tracks

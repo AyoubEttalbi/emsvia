@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.append(str(BASE_DIR))
 
-from config.settings import DATABASE_URL
+from config.settings import DATABASE_URL, IDENTITY_STABILITY_THRESHOLD, MIN_BUFFER_FOR_RECOG, RECOGNITION_MODELS
 from database.crud import AttendanceDB
 from models.face_detector import FaceDetector
 from models.face_recognizer import FaceRecognizer
@@ -20,7 +20,6 @@ from core.camera_handler import CameraHandler
 from core.attendance_manager import AttendanceManager
 from core.unknown_face_handler import UnknownFaceHandler
 from core.tracker import FaceTracker
-from config.settings import IDENTITY_STABILITY_THRESHOLD, MIN_BUFFER_FOR_RECOG, RECOGNITION_MODELS
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -53,121 +52,179 @@ def main():
     
     logger.info("All components initialized. Running main loop.")
     
+    # Optimization State
+    frame_count = 0
+    DETECTION_INTERVAL = 5
+    RECOGNITION_INTERVAL = 10
+    
+    
+    # Performance Monitoring
+    timings = {
+        "detection": [],
+        "recognition": [],
+        "total": []
+    }
+    
+    # Cache for student names to avoid DB hits on every frame
+    student_name_cache = {}
+    
     try:
         while True:
+            loop_start = time.time()
+            frame_count += 1
+            
             # 2. Get latest frame
             ret, frame = camera.read()
             if not ret or frame is None:
                 continue
                 
-            display_frame = camera.preprocess_frame(frame)
+            # Apply preprocessing (CLAHE enhancement) for both display AND processing
+            processed_frame = camera.preprocess_frame(frame)
             
-            # 3. Process frame
-            # Optimization: Recognition is expensive. We track every frame, 
-            # but only run Recognition/SR every N frames per track.
-            RECOGNITION_INTERVAL = 10 # frames
-            DEBUG_MODE = True # Set to False for production
+            # 3. Detection (Every N frames)
+            det_start = time.time()
+            if frame_count % DETECTION_INTERVAL == 0:
+                faces = detector.detect_faces(processed_frame)
+                tracker.update(faces)
+            else:
+                tracker.predict()
+            det_end = time.time()
+            if frame_count % DETECTION_INTERVAL == 0:
+                timings["detection"].append(det_end - det_start)
             
-            faces = detector.detect_faces(frame)
-            tracked_faces = tracker.update(faces)
-            active_student_ids = set()
-            active_track_ids = {f['track_id'] for f in tracked_faces}
-            
-            for face in tracked_faces:
-                x, y, w, h = face['box']
-                tid = face['track_id']
-                track_data = tracker.tracks[tid]
-                track_data['frame_count'] += 1
-                
-                # UI Defaults
-                x_disp = display_frame.shape[1] - (x + w)
-                color = (255, 0, 0) # Default tracking color
-                label = f"Track: {tid}"
-                
-                # 4. Extract and Buffer Embeddings (Every frame if quality OK)
-                face_crop = detector.extract_face(frame, [x, y, w, h])
-                if face_crop is not None:
-                    quality = detector.check_image_quality(face_crop)
-                    if quality['passed']:
-                        current_embeddings = recognizer.generate_embeddings(face_crop)
-                        if current_embeddings:
-                            for model_name, emb in current_embeddings.items():
-                                if model_name in track_data['embeddings_buffer']:
-                                    track_data['embeddings_buffer'][model_name].append(emb)
-
-                # 5. Averaging & Recognition
-                # Check if we have enough samples in the buffer for the first model
-                first_model = RECOGNITION_MODELS[0]
-                if len(track_data['embeddings_buffer'].get(first_model, [])) >= MIN_BUFFER_FOR_RECOG:
-                    # Average embeddings
-                    avg_embeddings = {}
-                    for model_name, buffer in track_data['embeddings_buffer'].items():
-                        if len(buffer) > 0:
-                            avg_embeddings[model_name] = np.mean(list(buffer), axis=0)
+            # 4. Recognition (Every M frames, for specific tracks)
+            rec_start = time.time()
+            if frame_count % RECOGNITION_INTERVAL == 0:
+                active_tracks = tracker.get_tracks()
+                for track_data in active_tracks:
+                    tid = track_data['track_id']
                     
-                    # Recognize based on averaged embeddings
-                    all_known = em_manager.get_all_embeddings()
-                    match_result = recognizer.find_best_match(avg_embeddings, all_known)
-                    track_data['last_match'] = match_result # For UI diagnostics
+                    # Skip if already stable identity (unless we want to re-verify occasionally)
+                    if track_data['current_identity'] is not None:
+                         continue
 
-                    # 6. Identity Stability Rule
-                    new_identity = match_result["student_id"] if match_result["match_found"] else None
+                    # Extract face (from enhanced frame)
+                    face_crop = detector.extract_face(processed_frame, track_data['box'], target_size=None)
                     
-                    if new_identity != track_data['current_identity']:
-                        track_data['identity_stability_counter'] += 1
-                        if track_data['identity_stability_counter'] >= IDENTITY_STABILITY_THRESHOLD:
-                            track_data['current_identity'] = new_identity
-                            track_data['identity_stability_counter'] = 0
-                    else:
-                        track_data['identity_stability_counter'] = 0
+                    if face_crop is not None:
+                        # Conditional Enhancement
+                        face_size = face_crop.shape[:2]
+                        # Check previous confidence (not easily available directly, passing None for now)
+                        face_crop = detector.enhancer.enhance_if_needed(face_crop, face_size)
+                        
+                        # Resize for model
+                        face_crop = cv2.resize(face_crop, (160, 160))
 
-                # 7. Apply Stable Identity
-                stable_id = track_data['current_identity']
-                if stable_id is not None:
-                    label = f"ID: {stable_id} (T:{tid})"
+                        quality = detector.check_image_quality(face_crop)
+                        if quality['passed']:
+                            current_embeddings = recognizer.generate_embeddings(face_crop)
+                            if current_embeddings:
+                                # Update tracker buffer directly
+                                real_track = tracker.tracks[tid]
+                                for model_name, emb in current_embeddings.items():
+                                    if model_name in real_track['embeddings_buffer']:
+                                        real_track['embeddings_buffer'][model_name].append(emb)
+                                
+                                # Perform recognition logic
+                                first_model = RECOGNITION_MODELS[0]
+                                buffer = real_track['embeddings_buffer'].get(first_model, [])
+                                if len(buffer) >= MIN_BUFFER_FOR_RECOG:
+                                    # Average
+                                    avg_embeddings = {}
+                                    for m_name, buf in real_track['embeddings_buffer'].items():
+                                        if buf: avg_embeddings[m_name] = np.mean(list(buf), axis=0)
+                                    
+                                    # Match
+                                    all_known = em_manager.get_all_embeddings()
+                                    match_result = recognizer.find_best_match(avg_embeddings, all_known)
+                                    real_track['last_match'] = match_result
+                                    
+                                    # Stability
+                                    new_identity = match_result["student_id"] if match_result["match_found"] else None
+                                    if new_identity != real_track['current_identity']:
+                                        real_track['identity_stability_counter'] += 1
+                                        if real_track['identity_stability_counter'] >= IDENTITY_STABILITY_THRESHOLD:
+                                            real_track['current_identity'] = new_identity
+                                            real_track['identity_stability_counter'] = 0
+                                            
+                                            # Mark Attendance
+                                            if new_identity:
+                                                 session = db_manager.get_session()
+                                                 attend_mgr.process_recognition(session, new_identity, track_id=tid, confidence=1.0)
+                                                 session.close()
+                                    else:
+                                        real_track['identity_stability_counter'] = 0
+
+            rec_end = time.time()
+            if frame_count % RECOGNITION_INTERVAL == 0:
+                timings["recognition"].append(rec_end - rec_start)
+
+            # 5. Display & UI (Every Frame)
+            active_tracks = tracker.get_tracks() # Get latest state
+            active_track_ids = set()
+            
+            for track_data in active_tracks:
+                tid = track_data['track_id']
+                active_track_ids.add(tid)
+                x, y, w, h = track_data['box']
+                
+                # Colors
+                color = (255, 0, 0) # Unknown/Searching
+                label = f"Track {tid}"
+                
+                if track_data['current_identity']:
                     color = (0, 255, 0)
-                    active_student_ids.add(stable_id)
+                    student_id = track_data['current_identity']
                     
-                    # Attendance Logic (Temporal evidence already handled by averaging/stability)
-                    session = db_manager.get_session()
-                    attend_mgr.process_recognition(session, stable_id, track_id=tid, confidence=1.0)
-                    session.close()
-                else:
-                    # If confirmed None and buffer full, it's truly Unknown
-                    if len(track_data['embeddings_buffer'].get(first_model, [])) >= MIN_BUFFER_FOR_RECOG:
-                        label = f"Unknown (T:{tid})"
-                        color = (0, 0, 255)
-                        # Periodic unknown handling
-                        if track_data['frame_count'] % 30 == 0 and face_crop is not None:
-                            session = db_manager.get_session()
-                            unknown_mgr.handle_unknown_face(session, face_crop, confidence=0.0)
-                            session.close()
+                    # Check cache first
+                    if student_id not in student_name_cache:
+                        session = db_manager.get_session()
+                        # The recognizer returns the DB Primary Key (int), not the string ID
+                        student = db_manager.get_student_by_pk(session, student_id)
+                        if student:
+                            # Cache the full display name
+                            student_name_cache[student_id] = f"{student.first_name} {student.last_name} ({student.student_id})"
+                        else:
+                            student_name_cache[student_id] = f"ID: {student_id}"
+                        session.close()
+                    
+                    label = student_name_cache.get(student_id, f"ID: {student_id}")
+                elif track_data['frame_count'] > 30: # Long time no ID
+                    color = (0, 0, 255)
+                    label = "Unknown"
+                
+                # Draw
+                cv2.rectangle(processed_frame, (x, y), (x+w, y+h), color, 2)
+                cv2.putText(processed_frame, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-                # Visual Debug Info
-                if DEBUG_MODE:
-                    buffer_len = len(track_data['embeddings_buffer'].get(first_model, []))
-                    cv2.putText(display_frame, f"Buf: {buffer_len} | Stab: {track_data['identity_stability_counter']}", 
-                                (x_disp, y + h + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-
-                # Draw UI overlays
-                cv2.rectangle(display_frame, (x_disp, y), (x_disp + w, y + h), color, 2)
-                cv2.putText(display_frame, label, (x_disp, y - 10), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
-            # Clean up stale tracks in manager
+            # Stats
             attend_mgr.clean_stale_tracks(active_track_ids)
+            
+            loop_end = time.time()
+            timings["total"].append(loop_end - loop_start)
+            
+            # FPS Calculation
+            if frame_count % 30 == 0:
+                total_times = timings["total"]
+                if len(total_times) > 30:
+                     avg_total = np.mean(total_times[-30:])
+                else:
+                     avg_total = np.mean(total_times) if total_times else 0
 
-            # Dashboard Info
-            fps = camera.get_fps()
-            cv2.putText(display_frame, f"FPS: {fps:.1f}", (10, 30), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                fps = 1.0 / avg_total if avg_total > 0 else 0
+            
+            # Use the averaged FPS (calculated every 30 frames)
+            # We initialize fps to 0 before the loop or handle the first 30 frames
+            current_fps_display = f"FPS: {fps:.1f}" if 'fps' in locals() else "FPS: --"
+
+            cv2.putText(processed_frame, current_fps_display, (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
             
             stats = attend_mgr.get_session_status()
-            cv2.putText(display_frame, f"Marked: {stats['marked_this_session']}", (10, 60), 
+            cv2.putText(processed_frame, f"Marked: {stats['marked_this_session']}", (10, 60), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-            # 7. Show frame
-            cv2.imshow("Real-time Attendance System", display_frame)
+            cv2.imshow("Real-time Attendance System", processed_frame)
             
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 logger.info("Exiting...")
