@@ -39,12 +39,11 @@ class FaceRecognizer:
         """
         if model_names:
             self.model_names = model_names
-        elif USE_RECOGNITION_ENSEMBLE:
-            self.model_names = RECOGNITION_MODELS
         else:
-            self.model_names = [FACE_RECOGNITION_MODEL]
+            from config.settings import get_active_recognizers
+            self.model_names = get_active_recognizers()
             
-        logger.info(f"FaceRecognizer initialized with models: {self.model_names}")
+        logger.info(f"FaceRecognizer initialized with active models: {self.model_names}")
 
     def generate_embeddings(self, image: np.ndarray) -> Dict[str, np.ndarray]:
         """

@@ -33,13 +33,20 @@ class FaceTracker:
         """
         if len(detections) == 0:
             tracks_to_del = []
-            for track_id in self.tracks:
-                self.tracks[track_id]['disappeared'] += 1
-                if self.tracks[track_id]['disappeared'] > self.max_disappeared:
+            results = []
+            for track_id, track in self.tracks.items():
+                track['disappeared'] += 1
+                if track['disappeared'] > self.max_disappeared:
                     tracks_to_del.append(track_id)
+                else:
+                    # Return last known position with its ID
+                    results.append({
+                        'track_id': track_id,
+                        'box': track['box']
+                    })
             for tid in tracks_to_del:
                 del self.tracks[tid]
-            return []
+            return results
 
         # If no tracks, register all detections
         if len(self.tracks) == 0:

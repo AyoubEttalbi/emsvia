@@ -34,25 +34,27 @@ class FaceDetector:
         """
         Initialize the Face Detector.
         """
-        self.backend = backend or FACE_DETECTION_MODEL
+        from config.settings import get_active_detectors
+        self.active_detectors = get_active_detectors()
+        self.backend = backend or (self.active_detectors[0] if self.active_detectors else FACE_DETECTION_MODEL)
         self.min_confidence = min_confidence or DETECTION_CONFIDENCE
         self.min_face_size = (MIN_FACE_SIZE_DETECTION, MIN_FACE_SIZE_DETECTION)
         
         # Initialize Enhancer & raw OpenCV Cascade
         self.enhancer = FaceEnhancer()
         self.face_cascade = None
-        if self.backend == "opencv":
+        if "opencv" in self.active_detectors or self.backend == "opencv":
             cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
             self.face_cascade = cv2.CascadeClassifier(cascade_path)
             
         # Initialize ONNX detector if GPU is enabled
         self.onnx_detector = None
-        if USE_GPU and self.backend == "retinaface":
+        if USE_GPU and "retinaface" in self.active_detectors:
             self.onnx_detector = RetinaFaceONNX(device=DEVICE)
             if not self.onnx_detector.is_ready():
                 logger.info("Falling back to DeepFace RetinaFace (ONNX not ready)")
         
-        logger.info(f"FaceDetector initialized with backend: {self.backend}")
+        logger.info(f"FaceDetector initialized with active detectors: {self.active_detectors}")
 
     def detect_only_model(self, image: np.ndarray, backend: str) -> List[Dict[str, Any]]:
         """
@@ -124,18 +126,18 @@ class FaceDetector:
         gpu_mgr = GPUModelManager()
         
         should_tile = use_tiling if use_tiling is not None else USE_TILING
-        should_ensemble = use_ensemble if use_ensemble is not None else USE_ENSEMBLE
+        
+        # Determine which models to run
+        models_to_run = self.active_detectors
+        should_ensemble = len(models_to_run) > 1
         
         # AUTO-SCALE: Disable heavy features on CPU
         if not gpu_mgr.is_gpu_ready():
             if should_tile or should_ensemble:
-                 # Only log once or silently override
                  should_tile = False
                  should_ensemble = False
+                 models_to_run = [models_to_run[0]] if models_to_run else ["opencv"]
 
-        # Determine which models to run
-        models_to_run = ENSEMBLE_DETECTORS if should_ensemble else [self.backend]
-        
         all_detections = []
         
         # 1. Run detectors
@@ -146,6 +148,7 @@ class FaceDetector:
             
             # Tiled detection
             if should_tile:
+                from detection.tiling import get_tiles, map_to_original
                 tiles = get_tiles(image, tile_size=TILE_SIZE, overlap=TILE_OVERLAP)
                 for tile_data in tiles:
                     tile_orig = tile_data['origin']
@@ -159,9 +162,11 @@ class FaceDetector:
         if not all_detections:
             return []
             
-        if should_ensemble and len(models_to_run) > 1:
+        if should_ensemble:
+            from detection.ensemble_detection import fuse_detections
             final_detections = fuse_detections(all_detections, iou_threshold=NMS_IOU_THRESHOLD)
         else:
+            from detection.tiling import apply_nms
             final_detections = apply_nms(all_detections, iou_threshold=NMS_IOU_THRESHOLD)
         
         # Filter by minimum size

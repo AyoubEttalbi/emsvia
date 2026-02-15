@@ -60,6 +60,13 @@ class GPUModelManager:
             logger.warning("    Performance will be significantly reduced. GPU acceleration recommended.")
             
         self._initialized = True
+        self._nvml_initialized = False
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            self._nvml_initialized = True
+        except Exception:
+            pass
 
     def clear_cache(self, force=False):
         """Clear GPU cache to free up VRAM."""
@@ -84,24 +91,49 @@ class GPUModelManager:
         return self.device.type == "cuda"
     
     def monitor_memory(self):
-        """Monitor and return GPU memory usage stats."""
+        """Monitor and return actual GPU memory usage stats."""
         if self.device.type == "cuda":
+            if self._nvml_initialized:
+                try:
+                    import pynvml
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                    info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    used = info.used / 1e9
+                    total = info.total / 1e9
+                    return {
+                        "allocated_gb": used,
+                        "reserved_gb": used,
+                        "total_gb": total,
+                        "utilization_pct": (used / total) * 100
+                    }
+                except Exception:
+                    self._nvml_initialized = False
+            
+            # Fallback to torch if pynvml fails or not available
             allocated = torch.cuda.memory_allocated() / 1e9
-            reserved = torch.cuda.memory_reserved() / 1e9
             total = torch.cuda.get_device_properties(0).total_memory / 1e9
             return {
                 "allocated_gb": allocated,
-                "reserved_gb": reserved,
+                "reserved_gb": torch.cuda.memory_reserved() / 1e9,
                 "total_gb": total,
                 "utilization_pct": (allocated / total) * 100
             }
         return {"allocated_gb": 0, "reserved_gb": 0, "total_gb": 0, "utilization_pct": 0}
+
+    def __del__(self):
+        """Cleanup NVML."""
+        if hasattr(self, '_nvml_initialized') and self._nvml_initialized:
+            try:
+                import pynvml
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
     
     def get_memory_summary(self):
         """Get formatted memory summary string."""
         if self.device.type == "cuda":
             stats = self.monitor_memory()
-            return f"GPU: {stats['allocated_gb']:.2f}/{stats['total_gb']:.2f}GB ({stats['utilization_pct']:.1f}%)"
+            return f"GPU Usage: {stats['allocated_gb']:.2f}/{stats['total_gb']:.2f}GB ({stats['utilization_pct']:.1f}%)"
         return "CPU Mode"
     
     def preload_model(self, model_name, model):
