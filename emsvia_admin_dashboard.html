@@ -1,0 +1,451 @@
+
+<h2 class="sr-only">EMSVIA Admin Dashboard — biometric attendance management system with overview, student directory, attendance logs, unknown face queue, and system health panels.</h2>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;500;600;700&family=Instrument+Sans:wght@400;500&display=swap');
+
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --nav:#0d0f14;
+  --nav-border:rgba(255,255,255,0.07);
+  --surface:#13161e;
+  --card:#1a1e28;
+  --card2:#20253300;
+  --accent:#00e5b4;
+  --accent2:#4f8fff;
+  --accent3:#ff6b6b;
+  --amber:#f5a623;
+  --text:#e8eaf0;
+  --muted:#6b7280;
+  --muted2:#9ca3af;
+  --border:rgba(255,255,255,0.07);
+  --pill-bg:rgba(0,229,180,0.1);
+  --pill-text:#00e5b4;
+  --font-head:'Syne',sans-serif;
+  --font-body:'Instrument Sans',sans-serif;
+  --font-mono:'DM Mono',monospace;
+}
+body{background:var(--surface);color:var(--text);font-family:var(--font-body);min-height:100vh;display:flex;flex-direction:column}
+
+.layout{display:flex;min-height:100vh}
+
+.nav{width:220px;min-width:220px;background:var(--nav);border-right:1px solid var(--nav-border);display:flex;flex-direction:column;padding:0;position:relative;flex-shrink:0}
+.nav-logo{padding:24px 20px 20px;border-bottom:1px solid var(--nav-border)}
+.nav-logo-icon{width:36px;height:36px;background:var(--accent);border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:10px}
+.nav-logo-icon svg{width:20px;height:20px;fill:#0d0f14}
+.nav-logo h1{font-family:var(--font-head);font-size:15px;font-weight:700;color:var(--text);letter-spacing:0.05em}
+.nav-logo p{font-size:10px;color:var(--muted);margin-top:2px;letter-spacing:0.08em;text-transform:uppercase}
+
+.nav-section{padding:16px 12px 8px;font-size:10px;color:var(--muted);letter-spacing:0.12em;text-transform:uppercase;font-family:var(--font-mono)}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 16px;margin:1px 8px;border-radius:8px;cursor:pointer;transition:all 0.15s;color:var(--muted2);font-size:13px;font-weight:500}
+.nav-item:hover{background:rgba(255,255,255,0.05);color:var(--text)}
+.nav-item.active{background:rgba(0,229,180,0.1);color:var(--accent)}
+.nav-item svg{width:16px;height:16px;flex-shrink:0;opacity:0.7}
+.nav-item.active svg{opacity:1}
+.nav-badge{margin-left:auto;background:var(--accent3);color:#fff;font-size:10px;font-weight:600;padding:1px 6px;border-radius:10px;font-family:var(--font-mono)}
+
+.nav-footer{margin-top:auto;padding:16px;border-top:1px solid var(--nav-border)}
+.gpu-pill{background:rgba(79,143,255,0.12);border:1px solid rgba(79,143,255,0.2);border-radius:8px;padding:10px 12px}
+.gpu-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:6px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.gpu-label{font-size:11px;color:var(--accent2);font-family:var(--font-mono)}
+.gpu-sub{font-size:10px;color:var(--muted);margin-top:3px}
+
+.main{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.topbar{height:56px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 28px;gap:16px;flex-shrink:0}
+.topbar-title{font-family:var(--font-head);font-size:16px;font-weight:600;flex:1}
+.topbar-badge{background:rgba(0,229,180,0.1);border:1px solid rgba(0,229,180,0.2);color:var(--accent);font-size:11px;padding:3px 10px;border-radius:20px;font-family:var(--font-mono)}
+.topbar-time{font-family:var(--font-mono);font-size:12px;color:var(--muted);letter-spacing:0.05em}
+
+.content{flex:1;overflow-y:auto;padding:24px 28px}
+
+.metrics-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
+.metric-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;position:relative;overflow:hidden;transition:border-color 0.2s}
+.metric-card:hover{border-color:rgba(255,255,255,0.14)}
+.metric-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;border-radius:12px 12px 0 0}
+.metric-card.green::before{background:var(--accent)}
+.metric-card.blue::before{background:var(--accent2)}
+.metric-card.red::before{background:var(--accent3)}
+.metric-card.amber::before{background:var(--amber)}
+.metric-label{font-size:11px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;font-family:var(--font-mono)}
+.metric-value{font-family:var(--font-head);font-size:28px;font-weight:700;color:var(--text);line-height:1}
+.metric-delta{font-size:11px;margin-top:6px;color:var(--muted2)}
+.metric-delta.up{color:var(--accent)}
+.metric-delta.down{color:var(--accent3)}
+.metric-icon{position:absolute;top:14px;right:16px;opacity:0.15;font-size:28px}
+
+.charts-row{display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:24px}
+.chart-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
+.chart-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.chart-title{font-family:var(--font-head);font-size:14px;font-weight:600}
+.chart-sub{font-size:11px;color:var(--muted);margin-top:2px;font-family:var(--font-mono)}
+.tag{background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:6px;font-size:10px;color:var(--muted2);padding:3px 8px;font-family:var(--font-mono)}
+
+.bar-area{height:180px;display:flex;align-items:flex-end;gap:6px}
+.bar-col{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1}
+.bar-track{width:100%;background:rgba(255,255,255,0.05);border-radius:4px;position:relative;overflow:hidden;flex:1}
+.bar-fill{position:absolute;bottom:0;left:0;right:0;border-radius:4px 4px 0 0;transition:height 0.6s cubic-bezier(0.16,1,0.3,1)}
+.bar-lbl{font-size:9px;color:var(--muted);font-family:var(--font-mono)}
+
+.donut-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:180px;gap:14px}
+.donut-svg{width:120px;height:120px}
+.donut-legend{display:flex;flex-direction:column;gap:6px;width:100%}
+.legend-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted2)}
+.legend-dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+.legend-val{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text)}
+
+.bottom-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
+.panel-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.panel-title{font-family:var(--font-head);font-size:14px;font-weight:600}
+
+.student-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)}
+.student-row:last-child{border-bottom:none}
+.avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;font-family:var(--font-mono)}
+.student-name{font-size:13px;font-weight:500}
+.student-id{font-size:10px;color:var(--muted);font-family:var(--font-mono)}
+.status-pill{margin-left:auto;font-size:10px;padding:2px 8px;border-radius:20px;font-weight:500;font-family:var(--font-mono)}
+.status-present{background:rgba(0,229,180,0.1);color:var(--accent)}
+.status-late{background:rgba(245,166,35,0.12);color:var(--amber)}
+.status-absent{background:rgba(255,107,107,0.1);color:var(--accent3)}
+
+.log-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px}
+.log-row:last-child{border-bottom:none}
+.log-time{font-family:var(--font-mono);font-size:11px;color:var(--muted);min-width:72px}
+.log-name{color:var(--text);font-weight:500;flex:1}
+.log-conf{font-family:var(--font-mono);font-size:10px;color:var(--muted2)}
+
+.unknown-alert{background:rgba(255,107,107,0.06);border:1px solid rgba(255,107,107,0.15);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.unknown-thumb{width:40px;height:40px;border-radius:8px;background:rgba(255,107,107,0.15);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.unknown-meta{flex:1}
+.unknown-meta p{font-size:12px;color:var(--text);font-weight:500}
+.unknown-meta span{font-size:10px;color:var(--muted);font-family:var(--font-mono)}
+.review-btn{background:rgba(255,107,107,0.15);border:1px solid rgba(255,107,107,0.25);color:var(--accent3);font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;font-family:var(--font-mono);transition:all 0.15s}
+.review-btn:hover{background:rgba(255,107,107,0.25)}
+
+.view-all{font-size:11px;color:var(--accent);cursor:pointer;font-family:var(--font-mono);letter-spacing:0.05em}
+.view-all:hover{opacity:0.8}
+
+.health-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:0}
+.health-item{background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:12px}
+.health-key{font-size:10px;color:var(--muted);font-family:var(--font-mono);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.08em}
+.health-val{font-size:13px;font-weight:500;color:var(--text)}
+.health-bar{height:4px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:8px;overflow:hidden}
+.health-bar-fill{height:100%;border-radius:2px;background:var(--accent);transition:width 1s ease}
+
+.camera-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
+.cam-feed{background:rgba(0,0,0,0.4);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:6px}
+.cam-icon{font-size:20px;opacity:0.4}
+.cam-label{font-size:10px;color:var(--muted);font-family:var(--font-mono)}
+.cam-status{font-size:10px;color:var(--accent);font-family:var(--font-mono)}
+
+.section-tabs{display:flex;gap:6px;margin-bottom:18px}
+.tab{padding:5px 12px;border-radius:6px;font-size:12px;cursor:pointer;font-family:var(--font-mono);color:var(--muted2);border:1px solid transparent;transition:all 0.15s}
+.tab.active{background:rgba(0,229,180,0.1);border-color:rgba(0,229,180,0.2);color:var(--accent)}
+.tab:hover:not(.active){background:rgba(255,255,255,0.04);color:var(--text)}
+
+.suggest-card{background:rgba(79,143,255,0.06);border:1px solid rgba(79,143,255,0.15);border-radius:10px;padding:14px;display:flex;align-items:flex-start;gap:10px;cursor:pointer;transition:all 0.15s;margin-top:8px}
+.suggest-card:hover{background:rgba(79,143,255,0.1);border-color:rgba(79,143,255,0.25)}
+.suggest-icon{font-size:16px;flex-shrink:0;margin-top:1px}
+.suggest-title{font-size:12px;font-weight:500;color:var(--accent2)}
+.suggest-desc{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5}
+</style>
+
+<div class="layout">
+  <nav class="nav">
+    <div class="nav-logo">
+      <div class="nav-logo-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+      </div>
+      <h1>EMSVIA</h1>
+      <p>Biometric Attendance</p>
+    </div>
+
+    <div class="nav-section">Core</div>
+    <div class="nav-item active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      Overview
+    </div>
+    <div class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Students
+    </div>
+    <div class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Attendance
+    </div>
+    <div class="nav-section">Security</div>
+    <div class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      Face Review
+      <span class="nav-badge">7</span>
+    </div>
+    <div class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+      Live Cameras
+    </div>
+    <div class="nav-section">System</div>
+    <div class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+      System Health
+    </div>
+    <div class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+      Settings
+    </div>
+
+    <div class="nav-footer">
+      <div class="gpu-pill">
+        <div style="display:flex;align-items:center"><span class="gpu-dot"></span><span class="gpu-label">GPU Active</span></div>
+        <div class="gpu-sub">GTX 1050 · CUDA 12.1</div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title">Dashboard Overview</div>
+      <span class="topbar-badge">● Live</span>
+      <span class="topbar-time" id="clock">--:--:--</span>
+    </div>
+
+    <div class="content">
+      <div class="metrics-grid">
+        <div class="metric-card green">
+          <div class="metric-label">Total Enrolled</div>
+          <div class="metric-value">247</div>
+          <div class="metric-delta up">▲ 12 this semester</div>
+          <div class="metric-icon">📋</div>
+        </div>
+        <div class="metric-card blue">
+          <div class="metric-label">Present Today</div>
+          <div class="metric-value">184</div>
+          <div class="metric-delta up">74.5% attendance rate</div>
+          <div class="metric-icon">✅</div>
+        </div>
+        <div class="metric-card red">
+          <div class="metric-label">Pending Reviews</div>
+          <div class="metric-value">7</div>
+          <div class="metric-delta down">▼ Needs attention</div>
+          <div class="metric-icon">⚠️</div>
+        </div>
+        <div class="metric-card amber">
+          <div class="metric-label">Recognition Rate</div>
+          <div class="metric-value">98.3%</div>
+          <div class="metric-delta up">▲ 0.4% from last week</div>
+          <div class="metric-icon">🎯</div>
+        </div>
+      </div>
+
+      <div class="charts-row">
+        <div class="chart-card">
+          <div class="chart-header">
+            <div>
+              <div class="chart-title">Attendance Trend</div>
+              <div class="chart-sub">Last 7 days · daily check-ins</div>
+            </div>
+            <span class="tag">weekly</span>
+          </div>
+          <div class="section-tabs">
+            <div class="tab active">All</div>
+            <div class="tab">Present</div>
+            <div class="tab">Late</div>
+            <div class="tab">Absent</div>
+          </div>
+          <div class="bar-area" id="barChart"></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-header">
+            <div>
+              <div class="chart-title">Status Split</div>
+              <div class="chart-sub">Today's distribution</div>
+            </div>
+          </div>
+          <div class="donut-wrap">
+            <svg class="donut-svg" viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="48" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="16"/>
+              <circle cx="60" cy="60" r="48" fill="none" stroke="#00e5b4" stroke-width="16" stroke-dasharray="188 113" stroke-dashoffset="0" stroke-linecap="round" transform="rotate(-90 60 60)"/>
+              <circle cx="60" cy="60" r="48" fill="none" stroke="#f5a623" stroke-width="16" stroke-dasharray="45 256" stroke-dashoffset="-188" stroke-linecap="round" transform="rotate(-90 60 60)"/>
+              <circle cx="60" cy="60" r="48" fill="none" stroke="#ff6b6b" stroke-width="16" stroke-dasharray="68 233" stroke-dashoffset="-233" stroke-linecap="round" transform="rotate(-90 60 60)"/>
+              <text x="60" y="56" text-anchor="middle" fill="#e8eaf0" font-size="16" font-weight="700" font-family="Syne,sans-serif">184</text>
+              <text x="60" y="70" text-anchor="middle" fill="#6b7280" font-size="9" font-family="DM Mono,monospace">present</text>
+            </svg>
+            <div class="donut-legend">
+              <div class="legend-row"><span class="legend-dot" style="background:#00e5b4"></span>Present<span class="legend-val">184</span></div>
+              <div class="legend-row"><span class="legend-dot" style="background:#f5a623"></span>Late<span class="legend-val">23</span></div>
+              <div class="legend-row"><span class="legend-dot" style="background:#ff6b6b"></span>Absent<span class="legend-val">40</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bottom-row">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Recent Activity</div>
+            <span class="view-all">View all →</span>
+          </div>
+          <div class="log-row">
+            <span class="log-time">09:02 AM</span>
+            <span class="log-name">Amir Khalid</span>
+            <span class="status-pill status-present">present</span>
+            <span class="log-conf">0.97</span>
+          </div>
+          <div class="log-row">
+            <span class="log-time">09:04 AM</span>
+            <span class="log-name">Sara Benali</span>
+            <span class="status-pill status-present">present</span>
+            <span class="log-conf">0.94</span>
+          </div>
+          <div class="log-row">
+            <span class="log-time">09:11 AM</span>
+            <span class="log-name">Youssef Tazi</span>
+            <span class="status-pill status-late">late</span>
+            <span class="log-conf">0.91</span>
+          </div>
+          <div class="log-row">
+            <span class="log-time">09:15 AM</span>
+            <span class="log-name">Nour El Amine</span>
+            <span class="status-pill status-present">present</span>
+            <span class="log-conf">0.99</span>
+          </div>
+          <div class="log-row">
+            <span class="log-time">09:22 AM</span>
+            <span class="log-name">Fatima Zahra</span>
+            <span class="status-pill status-absent">absent</span>
+            <span class="log-conf">—</span>
+          </div>
+          <div class="log-row">
+            <span class="log-time">09:30 AM</span>
+            <span class="log-name">Omar Idrissi</span>
+            <span class="status-pill status-present">present</span>
+            <span class="log-conf">0.96</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Unknown Face Queue</div>
+            <span style="font-size:10px;background:rgba(255,107,107,0.1);color:var(--accent3);padding:2px 8px;border-radius:20px;font-family:var(--font-mono)">7 pending</span>
+          </div>
+          <div class="unknown-alert">
+            <div class="unknown-thumb">👤</div>
+            <div class="unknown-meta">
+              <p>Unknown — Cam A · Entry Hall</p>
+              <span>09:07:23 AM · conf 0.41 · GTX detected</span>
+            </div>
+            <button class="review-btn">Review</button>
+          </div>
+          <div class="unknown-alert">
+            <div class="unknown-thumb">👤</div>
+            <div class="unknown-meta">
+              <p>Unknown — Cam B · Corridor 2</p>
+              <span>09:14:55 AM · conf 0.38 · reappeared 3×</span>
+            </div>
+            <button class="review-btn">Review</button>
+          </div>
+          <div class="unknown-alert">
+            <div class="unknown-thumb">👤</div>
+            <div class="unknown-meta">
+              <p>Unknown — Cam C · Classroom 3</p>
+              <span>09:29:11 AM · conf 0.52 · new face</span>
+            </div>
+            <button class="review-btn">Review</button>
+          </div>
+
+          <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px">
+            <div class="panel-title" style="margin-bottom:10px;font-size:13px">Suggested Features</div>
+            <div class="suggest-card" onclick="sendPrompt('Can you add a live heatmap showing which classrooms have the most unrecognized faces over time?')">
+              <span class="suggest-icon">🗺️</span>
+              <div>
+                <div class="suggest-title">Live face heatmap by room ↗</div>
+                <div class="suggest-desc">Map unknown detections per camera zone over time</div>
+              </div>
+            </div>
+            <div class="suggest-card" onclick="sendPrompt('Can you add an automated email alert system when attendance falls below a threshold?')">
+              <span class="suggest-icon">📧</span>
+              <div>
+                <div class="suggest-title">Absence alert emails ↗</div>
+                <div class="suggest-desc">Auto-notify guardians when below attendance threshold</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:14px">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">System Health</div>
+            <span class="tag">live</span>
+          </div>
+          <div class="health-grid">
+            <div class="health-item">
+              <div class="health-key">GPU Utilization</div>
+              <div class="health-val">62%</div>
+              <div class="health-bar"><div class="health-bar-fill" style="width:62%"></div></div>
+            </div>
+            <div class="health-item">
+              <div class="health-key">VRAM Used</div>
+              <div class="health-val">2.8 GB / 4 GB</div>
+              <div class="health-bar"><div class="health-bar-fill" style="width:70%;background:var(--accent2)"></div></div>
+            </div>
+            <div class="health-item">
+              <div class="health-key">Face Pipeline</div>
+              <div class="health-val">RetinaFace ONNX</div>
+              <div class="health-bar"><div class="health-bar-fill" style="width:95%"></div></div>
+            </div>
+            <div class="health-item">
+              <div class="health-key">DB Records</div>
+              <div class="health-val">14,802 entries</div>
+              <div class="health-bar"><div class="health-bar-fill" style="width:42%;background:var(--amber)"></div></div>
+            </div>
+          </div>
+          <div class="camera-grid" style="margin-top:14px">
+            <div class="cam-feed">
+              <div class="cam-icon">📷</div>
+              <div class="cam-label">Camera A — Entry</div>
+              <div class="cam-status">● streaming</div>
+            </div>
+            <div class="cam-feed">
+              <div class="cam-icon">📷</div>
+              <div class="cam-label">Camera B — Corridor 2</div>
+              <div class="cam-status">● streaming</div>
+            </div>
+            <div class="cam-feed">
+              <div class="cam-icon">📷</div>
+              <div class="cam-label">Camera C — Class 3</div>
+              <div class="cam-status">● streaming</div>
+            </div>
+            <div class="cam-feed" style="opacity:0.4">
+              <div class="cam-icon">📷</div>
+              <div class="cam-label">Camera D — Exit</div>
+              <div class="cam-status" style="color:var(--accent3)">○ offline</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const vals = [198,212,176,224,184,0,0];
+const bar = document.getElementById('barChart');
+const max = Math.max(...vals);
+days.forEach((d,i)=>{
+  const col = document.createElement('div');
+  col.className = 'bar-col';
+  const pct = max ? (vals[i]/max*100) : 0;
+  const color = i===4?'var(--accent)':i>=5?'rgba(255,255,255,0.04)':'rgba(0,229,180,0.4)';
+  col.innerHTML = `<div class="bar-track"><div class="bar-fill" style="background:${color};height:${pct}%"></div></div><div class="bar-lbl">${d}</div>`;
+  bar.appendChild(col);
+});
+
+function tick(){
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toLocaleTimeString('en-GB');
+}
+tick(); setInterval(tick,1000);
+</script>

@@ -60,6 +60,39 @@ class AttendanceManager:
                 
         return False
 
+    def manual_mark_attendance(self, session: Session, student_id: int, 
+                               status: str = "present", 
+                               confidence: float = 1.0,
+                               camera_id: str = "manual_override") -> bool:
+        """
+        Manually mark attendance for a student, bypassing consistency checks.
+        """
+        success = self.db.mark_attendance(
+            session, 
+            student_id, 
+            confidence=confidence, 
+            status=status, 
+            camera_id=camera_id
+        )
+        if success:
+            self.last_marked[student_id] = time.time()
+            logger.info(f"Manual attendance marked for student {student_id} (Status: {status})")
+            return True
+        return False
+
+    def log_departure(self, session: Session, student_id: int) -> bool:
+        """
+        Log student departure by updating their latest record or creating a new 'departed' event.
+        """
+        # We'll log it as a new record with status 'departed' for simplicity
+        # Alternatively, we could update the 'present' record, but tracking arrivals and 
+        # departures as separate events is better for auditing.
+        success = self.db.mark_attendance(session, student_id, confidence=1.0, status="departed")
+        if success:
+            logger.info(f"Departure logged for student {student_id}")
+            return True
+        return False
+
     def clean_stale_tracks(self, active_track_ids: Set[int]):
         """Remove evidence for tracks that are no longer visible."""
         stale_tracks = set(self.track_evidence.keys()) - active_track_ids

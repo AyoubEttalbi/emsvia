@@ -101,6 +101,7 @@ class GPUModelManager:
                     used = info.used / 1e9
                     total = info.total / 1e9
                     return {
+                        "name": pynvml.nvmlDeviceGetName(handle),
                         "allocated_gb": used,
                         "reserved_gb": used,
                         "total_gb": total,
@@ -108,17 +109,20 @@ class GPUModelManager:
                     }
                 except Exception:
                     self._nvml_initialized = False
+
             
             # Fallback to torch if pynvml fails or not available
             allocated = torch.cuda.memory_allocated() / 1e9
             total = torch.cuda.get_device_properties(0).total_memory / 1e9
             return {
+                "name": torch.cuda.get_device_name(0),
                 "allocated_gb": allocated,
                 "reserved_gb": torch.cuda.memory_reserved() / 1e9,
                 "total_gb": total,
                 "utilization_pct": (allocated / total) * 100
             }
-        return {"allocated_gb": 0, "reserved_gb": 0, "total_gb": 0, "utilization_pct": 0}
+        return {"name": "CPU Mode", "allocated_gb": 0, "reserved_gb": 0, "total_gb": 0, "utilization_pct": 0}
+
 
     def __del__(self):
         """Cleanup NVML."""

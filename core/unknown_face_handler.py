@@ -69,6 +69,10 @@ class UnknownFaceHandler:
             logger.error(f"Error handling unknown face: {e}")
             return False
 
+    def clear_cooldown(self):
+        """Reset the cooldown timer."""
+        self.last_log_time = 0
+
     def get_stats(self, session: Session) -> int:
         """Get total number of unreviewed unknown faces."""
         return len(self.db.get_unreviewed_faces(session))

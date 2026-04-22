@@ -167,6 +167,48 @@ class AttendanceDB:
             query = query.filter(AttendanceRecord.timestamp <= end_date)
         return query.order_by(AttendanceRecord.timestamp.desc()).all()
 
+    def get_latest_attendance(self, session: Session, student_id: int) -> Optional[AttendanceRecord]:
+        """Retrieve the most recent attendance record for a student."""
+        return (
+            session.query(AttendanceRecord)
+            .filter(AttendanceRecord.student_id == student_id)
+            .order_by(AttendanceRecord.timestamp.desc())
+            .first()
+        )
+
+    def delete_attendance_record(self, session: Session, record_id: int) -> bool:
+        """Delete a specific attendance record."""
+        try:
+            record = session.query(AttendanceRecord).filter(AttendanceRecord.id == record_id).first()
+            if record:
+                session.delete(record)
+                session.commit()
+                logger.info(f"Deleted attendance record ID {record_id}")
+                return True
+            return False
+        except SQLAlchemyError as e:
+            session.rollback()
+            logger.error(f"Error deleting attendance record {record_id}: {e}")
+            return False
+
+    def update_attendance_record(self, session: Session, record_id: int, 
+                                updates: Dict[str, Any]) -> bool:
+        """Update fields of an attendance record."""
+        try:
+            record = session.query(AttendanceRecord).filter(AttendanceRecord.id == record_id).first()
+            if record:
+                for key, value in updates.items():
+                    if hasattr(record, key):
+                        setattr(record, key, value)
+                session.commit()
+                logger.info(f"Updated attendance record ID {record_id}")
+                return True
+            return False
+        except SQLAlchemyError as e:
+            session.rollback()
+            logger.error(f"Error updating attendance record {record_id}: {e}")
+            return False
+
     # --- Unknown Face Operations ---
 
     def log_unknown_face(self, session: Session, image_path: str, confidence: Optional[float] = None) -> Optional[UnknownFace]:
