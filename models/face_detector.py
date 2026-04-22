@@ -3,6 +3,8 @@ import numpy as np
 from deepface import DeepFace
 from typing import List, Tuple, Optional, Dict, Any
 import logging
+import json
+import time
 from config.settings import (
     FACE_DETECTION_MODEL, 
     DETECTION_CONFIDENCE, 
@@ -23,6 +25,25 @@ from detection.retinaface_onnx import RetinaFaceONNX
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+# #region agent log
+def _debug_log(location, message, data, hypothesis_id=None, run_id="debug"):
+    try:
+        log_entry = {
+            "id": f"log_{int(time.time() * 1000)}",
+            "timestamp": int(time.time() * 1000),
+            "location": location,
+            "message": message,
+            "data": data,
+            "runId": run_id
+        }
+        if hypothesis_id:
+            log_entry["hypothesisId"] = hypothesis_id
+        with open("/home/ayoub/projects/Ai-Ml/emsvia/.cursor/debug.log", "a") as f:
+            f.write(json.dumps(log_entry) + "\n")
+    except Exception:
+        pass
+# #endregion
 
 class FaceDetector:
     """
@@ -192,6 +213,9 @@ class FaceDetector:
         face_crop = image[y1:y2, x1:x2]
         if face_crop.size == 0: return None
         
+        original_h, original_w = face_crop.shape[:2]
+        sr_applied = False
+        
         # Resize to target size (standard behavior)
         if target_size:
             # Check if we should ENHANCE before resizing
@@ -202,9 +226,34 @@ class FaceDetector:
             gpu_mgr = GPUModelManager()
             if (w < 64 or h < 64) and gpu_mgr.is_gpu_ready():
                  face_crop = self.enhancer.enhance_face(face_crop)
+                 sr_applied = True
             
-            return cv2.resize(face_crop, target_size, interpolation=cv2.INTER_AREA)
+            final_crop = cv2.resize(face_crop, target_size, interpolation=cv2.INTER_AREA)
             
+            # #region agent log
+            _debug_log("face_detector.py:206", "face_extracted", {
+                "original_size": [original_w, original_h],
+                "target_size": list(target_size),
+                "final_size": list(final_crop.shape[:2]),
+                "sr_applied": sr_applied,
+                "box": [x, y, w, h],
+                "padding_pct": padding_pct,
+                "crop_mean": float(np.mean(final_crop)),
+                "crop_std": float(np.std(final_crop)),
+                "crop_min": float(np.min(final_crop)),
+                "crop_max": float(np.max(final_crop))
+            }, hypothesis_id="H1")
+            # #endregion
+            
+            return final_crop
+            
+        # #region agent log
+        _debug_log("face_detector.py:208", "face_extracted_no_resize", {
+            "original_size": [original_w, original_h],
+            "box": [x, y, w, h]
+        }, hypothesis_id="H1")
+        # #endregion
+        
         return face_crop
 
     def check_image_quality(self, image: np.ndarray) -> Dict[str, Any]:
@@ -212,13 +261,19 @@ class FaceDetector:
         Perform basic quality checks on a face image.
         """
         results = {"passed": True, "blur_score": 0.0, "is_blurry": False, "brightness": 0.0, "is_too_dark": False, "is_too_bright": False}
-        if image is None: return {"passed": False}
+        if image is None or image.size == 0:
+            # #region agent log
+            _debug_log("face_detector.py:210", "quality_check_failed", {
+                "reason": "image_none_or_empty"
+            }, hypothesis_id="H4")
+            # #endregion
+            return {"passed": False}
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
         results["blur_score"] = blur_score
         
-        # Extremely loose for low-end webcams
-        if blur_score < 5: 
+        # Stricter gate to prevent blurry "generic" embeddings
+        if blur_score < 40: 
             results["is_blurry"] = True
             results["passed"] = False
             
@@ -232,6 +287,19 @@ class FaceDetector:
         elif avg_brightness > 235:
             results["is_too_bright"] = True
             results["passed"] = False
+        
+        # #region agent log
+        _debug_log("face_detector.py:290", "quality_check_result", {
+            "passed": results["passed"],
+            "blur_score": float(results["blur_score"]),
+            "is_blurry": results["is_blurry"],
+            "brightness": float(results["brightness"]),
+            "is_too_dark": results["is_too_dark"],
+            "is_too_bright": results["is_too_bright"],
+            "image_shape": image.shape if image is not None else None
+        }, hypothesis_id="H4")
+        # #endregion
+        
         return results
 
     def validate_for_enrollment(self, image: np.ndarray) -> Dict[str, Any]:

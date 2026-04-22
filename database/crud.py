@@ -88,6 +88,19 @@ class AttendanceDB:
             logger.error(f"Error adding embedding for student {student_id}: {e}")
             return False
 
+    def get_processed_image_paths(self, session: Session, student_id: int) -> set:
+        """Return a set of image_path values already stored for a student (for incremental generation)."""
+        rows = (
+            session.query(FaceEmbedding.image_path)
+            .filter(
+                FaceEmbedding.student_id == student_id,
+                FaceEmbedding.image_path.isnot(None)
+            )
+            .distinct()
+            .all()
+        )
+        return {row[0] for row in rows}
+
     def get_student_embeddings(self, session: Session, student_id: int) -> List[Dict[str, Any]]:
         """Retrieve all embeddings for a student as a list of dicts with numpy arrays."""
         embeddings = session.query(FaceEmbedding).filter(FaceEmbedding.student_id == student_id).all()

@@ -9,18 +9,54 @@ from typing import Optional
 # Add project root to sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-from config.settings import DATABASE_URL
+# 0. GPU & Environment Setup (Same as main_gpu.py)
+import site
+import ctypes
+
+# Force Legacy Keras for compatibility
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
+os.environ["KERAS_BACKEND"] = "tensorflow"
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+
+# Pre-load cuDNN 8 libraries
+tf_cudnn8_path = os.path.join(BASE_DIR, "libs/cudnn8")
+if os.path.exists(tf_cudnn8_path):
+    for lib_name in [
+        "libcudnn.so.8", "libcudnn_ops_infer.so.8", "libcudnn_cnn_infer.so.8",
+        "libcudnn_adv_infer.so.8"
+    ]:
+        try:
+            ctypes.CDLL(os.path.join(tf_cudnn8_path, lib_name), mode=ctypes.RTLD_GLOBAL)
+        except Exception as le:
+            logger.warning(f"Failed to pre-load {lib_name}: {le}")
+
+# Configure TensorFlow memory limit
+import tensorflow as tf
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        tf.config.set_logical_device_configuration(
+            gpus[0],
+            [tf.config.LogicalDeviceConfiguration(memory_limit=int(os.getenv('TF_GPU_MEMORY_LIMIT', '2500')))]
+        )
+    except Exception:
+        pass
+
+from config.settings import DATABASE_URL, FRAME_WIDTH, FRAME_HEIGHT
 from database.crud import AttendanceDB
 from models.face_detector import FaceDetector
 from models.face_recognizer import FaceRecognizer
 from models.embeddings_manager import EmbeddingsManager
+from core.camera_handler import CameraHandler
+from models.gpu_manager import GPUModelManager
 from preprocessing.pipeline import preprocess_frame
+from detection.async_detector import AsyncDetector
 from scripts.generate_embeddings import process_student_images
-
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 def get_next_student_id(db_manager: AttendanceDB, session) -> str:
     """
@@ -58,6 +94,7 @@ def collect_student_data():
     print("="*50 + "\n")
 
     # 1. Initialize Components
+    gpu_mgr = GPUModelManager()
     db_manager = AttendanceDB(DATABASE_URL)
     session = db_manager.get_session()
     detector = FaceDetector(min_confidence=0.9)
@@ -108,26 +145,35 @@ def collect_student_data():
                 validation = detector.validate_for_enrollment(frame)
                 if validation['passed']:
                     face_crop = validation['face_crop']
+                    
+                    # CRITICAL: Apply same preprocessing as live recognition
+                    processed_face = preprocess_frame(face_crop)
+                    
                     save_name = f"{student_id}_{captured_count:02d}.jpg"
-                    cv2.imwrite(str(images_dir / save_name), face_crop)
+                    cv2.imwrite(str(images_dir / save_name), processed_face)
                     captured_count += 1
                 
             print(f"\nEnrollment complete! {captured_count} valid face images saved.")
 
         else:
             # --- CAMERA MODE ---
-            source = input("Enter camera index (0) or IP URL: ").strip()
-            try:
-                # If it's a number, convert it
-                source = int(source)
-            except:
-                pass # Keep as string (URL)
+            source_input = input("Enter camera index (0), IP URL, or press Enter for auto-select: ").strip()
+            if source_input == "":
+                source = 0
+            else:
+                try:
+                    # If it's a number, convert it
+                    source = int(source_input)
+                except:
+                    source = source_input # Keep as string (URL)
 
-            cap = cv2.VideoCapture(source)
-            if not cap.isOpened():
-                print("Error: Could not open camera.")
-                return
-
+            cap = CameraHandler(source=source, resolution=(FRAME_WIDTH, FRAME_HEIGHT), auto_select=True)
+            cap.start()
+            
+            # Initialize Async Detector for smooth preview
+            async_detector = AsyncDetector(detector)
+            async_detector.start()
+            
             print(f"\nStudent {first_name} registered successfully with ID {student_id}.")
             print("Press 'c' to capture, 'q' to quit.")
 
@@ -149,24 +195,43 @@ def collect_student_data():
 
                 while stage_captured < current_stage['target']:
                     ret, frame = cap.read()
-                    if not ret: break
+                    if not ret or frame is None:
+                        time.sleep(0.01)
+                        continue
 
-                    display_frame = cv2.flip(frame, 1) if isinstance(source, int) else frame
-                    validation = detector.validate_for_enrollment(frame)
+                    # Mirror display for natural feeling
+                    display_frame = cv2.flip(frame, 1)
                     
-                    status_color = (0, 255, 0) if validation['passed'] else (0, 0, 255)
+                    # Async detection
+                    faces = async_detector.detect_async(frame)
                     
+                    # Basic UI feedback
+                    face_box = None
+                    validation_msg = "Scanning..."
+                    status_color = (0, 255, 255) # Yellow while scanning
+                    
+                    if len(faces) == 0:
+                        validation_msg = "No face detected."
+                        status_color = (0, 0, 255)
+                    elif len(faces) > 1:
+                        validation_msg = "Too many faces! Ensure only one person is in frame."
+                        status_color = (0, 0, 255)
+                    else:
+                        face_box = faces[0]['box']
+                        validation_msg = "Face detected. Quality check pending..."
+                        status_color = (0, 255, 0)
+
                     # UI Overlays
                     cv2.putText(display_frame, f"STAGE: {current_stage['name']} ({stage_captured}/{current_stage['target']})", 
                                 (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.putText(display_frame, current_stage['message'], (10, 60), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                    cv2.putText(display_frame, validation['message'], (10, display_frame.shape[0] - 20), 
+                    cv2.putText(display_frame, validation_msg, (10, display_frame.shape[0] - 20), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
 
-                    if validation['face_box']:
-                        x, y, w, h = validation['face_box']
-                        x_disp = display_frame.shape[1] - (x + w) if isinstance(source, int) else x
+                    if face_box:
+                        x, y, w, h = face_box
+                        x_disp = display_frame.shape[1] - (x + w)
                         cv2.rectangle(display_frame, (x_disp, y), (x_disp + w, y + h), status_color, 2)
 
                     cv2.imshow("Student Enrollment", display_frame)
@@ -176,22 +241,30 @@ def collect_student_data():
                         stage_idx = 99 # Break outer
                         break
                     elif key in [ord('c'), 32]: # 'c' or Space
-                        if validation['passed']:
-                            face_crop = validation['face_crop']
+                        if face_box:
+                            # Final quality validation before saving
+                            face_crop = detector.extract_face(frame, face_box)
+                            quality = detector.check_image_quality(face_crop)
                             
-                            # CRITICAL: Apply same preprocessing as live recognition
-                            processed_face = preprocess_frame(face_crop)
-                            
-                            save_name = f"{student_id}_{captured_count:02d}.jpg"
-                            cv2.imwrite(str(images_dir / save_name), processed_face)
-                            
-                            captured_count += 1
-                            stage_captured += 1
-                            print(f"Captured {stage_captured}/{current_stage['target']} for {current_stage['name']}")
+                            if quality['passed']:
+                                # CRITICAL: Apply same preprocessing as live recognition
+                                processed_face = preprocess_frame(face_crop)
+                                
+                                save_name = f"{student_id}_{captured_count:02d}.jpg"
+                                cv2.imwrite(str(images_dir / save_name), processed_face)
+                                
+                                captured_count += 1
+                                stage_captured += 1
+                                print(f"Captured {stage_captured}/{current_stage['target']} for {current_stage['name']}")
+                            else:
+                                print(f"Capture failed: Low image quality ({quality.get('message', 'check blur/lighting')})")
+                        else:
+                            print("Capture failed: No face detected.")
 
                 stage_idx += 1
 
-            cap.release()
+            async_detector.stop()
+            cap.stop()
             cv2.destroyAllWindows()
 
         # 7. Post-enrollment Embedding Generation

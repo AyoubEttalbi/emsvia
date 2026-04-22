@@ -3,6 +3,8 @@ from deepface import DeepFace
 from typing import List, Optional, Dict, Union, Any
 import logging
 from scipy.spatial import distance
+import json
+import time
 from config.settings import (
     FACE_RECOGNITION_MODEL, 
     RECOGNITION_THRESHOLD,
@@ -13,6 +15,25 @@ from config.settings import (
 
 logger = logging.getLogger(__name__)
 
+# #region agent log
+def _debug_log(location, message, data, hypothesis_id=None, run_id="debug"):
+    try:
+        log_entry = {
+            "id": f"log_{int(time.time() * 1000)}",
+            "timestamp": int(time.time() * 1000),
+            "location": location,
+            "message": message,
+            "data": data,
+            "runId": run_id
+        }
+        if hypothesis_id:
+            log_entry["hypothesisId"] = hypothesis_id
+        with open("/home/ayoub/projects/Ai-Ml/emsvia/.cursor/debug.log", "a") as f:
+            f.write(json.dumps(log_entry) + "\n")
+    except Exception:
+        pass
+# #endregion
+
 class FaceRecognizer:
     """
     Handles face embedding generation and matching using DeepFace.
@@ -20,11 +41,12 @@ class FaceRecognizer:
     """
     
     # Default thresholds for models (Cosine Distance)
+    # Based on DeepFace official recommendations and industry standards
     THRESHOLDS = {
-        "Facenet512": 0.30,
-        "ArcFace": 0.68,
-        "VGG-Face": 0.40,
-        "Facenet": 0.40,
+        "Facenet512": 0.30,  # Standard DeepFace threshold
+        "ArcFace": 0.35,     # Stricter threshold for ArcFace (Cosine distance: lower is better)
+        "VGG-Face": 0.40,    # Standard DeepFace threshold
+        "Facenet": 0.40,     # Standard DeepFace threshold
         "OpenFace": 0.10,
         "DeepFace": 0.23,
         "DeepID": 0.01
@@ -44,11 +66,25 @@ class FaceRecognizer:
             self.model_names = get_active_recognizers()
             
         logger.info(f"FaceRecognizer initialized with active models: {self.model_names}")
+    
 
     def generate_embeddings(self, image: np.ndarray) -> Dict[str, np.ndarray]:
         """
         Generate face embedding vectors for all models.
         """
+        # #region agent log
+        _debug_log("face_recognizer.py:50", "generate_embeddings_start", {
+            "image_shape": image.shape if image is not None else None,
+            "image_size": image.size if image is not None else 0,
+            "image_dtype": str(image.dtype) if image is not None else None,
+            "image_mean": float(np.mean(image)) if image is not None else None,
+            "image_std": float(np.std(image)) if image is not None else None,
+            "image_min": float(np.min(image)) if image is not None else None,
+            "image_max": float(np.max(image)) if image is not None else None,
+            "models": self.model_names
+        }, hypothesis_id="H1")
+        # #endregion
+        
         results = {}
         if image is None or image.size == 0:
             return results
@@ -67,9 +103,43 @@ class FaceRecognizer:
                     detector_backend="skip"
                 )
                 if embedding_objs:
-                    results[model] = np.array(embedding_objs[0]["embedding"])
+                    embedding = np.array(embedding_objs[0]["embedding"])
+                    
+                    # CRITICAL FIX: Explicit L2 Normalization
+                    # Ensures consistent scale for cosine distance even if pixel stats vary
+                    norm = np.linalg.norm(embedding)
+                    if norm > 0:
+                        embedding = embedding / norm
+                    
+                    results[model] = embedding
+                    
+                    # #region agent log
+                    _debug_log("face_recognizer.py:72", "embedding_generated", {
+                        "model": model,
+                        "embedding_shape": embedding.shape,
+                        "embedding_norm": float(np.linalg.norm(embedding)),
+                        "embedding_mean": float(np.mean(embedding)),
+                        "embedding_std": float(np.std(embedding)),
+                        "embedding_min": float(np.min(embedding)),
+                        "embedding_max": float(np.max(embedding))
+                    }, hypothesis_id="H3")
+                    # #endregion
             except Exception as e:
                 logger.error(f"Error generating embedding for {model}: {e}")
+                # #region agent log
+                _debug_log("face_recognizer.py:74", "embedding_error", {
+                    "model": model,
+                    "error": str(e)
+                }, hypothesis_id="H1")
+                # #endregion
+        
+        # #region agent log
+        _debug_log("face_recognizer.py:75", "generate_embeddings_end", {
+            "results_count": len(results),
+            "models_success": list(results.keys())
+        }, hypothesis_id="H1")
+        # #endregion
+        
         return results
 
     def generate_embedding(self, image: np.ndarray) -> Optional[np.ndarray]:
@@ -93,57 +163,177 @@ class FaceRecognizer:
     def find_best_match(self, source_embeddings: Dict[str, np.ndarray], 
                         database_embeddings: Dict[int, Dict[str, List[np.ndarray]]]) -> Dict[str, Any]:
         """
-        Find the closest match using Ensemble Voting.
+        Find the closest match using Consensus Voting.
+        
+        Consensus Rule: Evaluate all stored embeddings for a student and require that >20% 
+        of the templates tie matches within the threshold. Matches with the highest pass
+        vectors will be selected.
         """
-        votes = {} # student_id -> score
-        model_results = {} # model_name -> best_match_for_that_model
-
+        votes = {}  # student_id -> count
+        model_results = {}  # model_name -> {id, dist, second_best_dist}
+        all_best_distances = []  # Track all best distances for rejection
+        
+        # For each model, find best match taking into account consensus
         for model_name, source_vector in source_embeddings.items():
-            min_dist = float("inf")
-            best_id_for_model = None
-            
             threshold = self.THRESHOLDS.get(model_name, 0.40)
+            
+            # #region agent log
+            _debug_log("face_recognizer.py:110", "model_matching_start", {
+                "model": model_name,
+                "threshold": threshold,
+                "source_embedding_norm": float(np.linalg.norm(source_vector)),
+                "database_students_count": len(database_embeddings)
+            }, hypothesis_id="H2")
+            # #endregion
+            
+            student_metrics = {} # student_id -> {"passing_vectors": int, "match_ratio": float, "min_dist": float}
             
             for student_id, model_dict in database_embeddings.items():
                 if not isinstance(model_dict, dict) or model_name not in model_dict:
                     continue
-                    
+                
+                passing_vectors = 0
+                total_vectors = len(model_dict[model_name])
+                student_min_dist = float("inf")
+                
+                # Find minimum distance across ALL embeddings for this student
                 for db_vector in model_dict[model_name]:
                     dist = self.calculate_distance(source_vector, db_vector, metric="cosine")
-                    if dist < min_dist:
-                        min_dist = dist
-                        best_id_for_model = student_id
-            
-            if best_id_for_model is not None and min_dist <= threshold:
-                model_results[model_name] = {"id": best_id_for_model, "dist": min_dist}
+                    
+                    if dist <= threshold:
+                        passing_vectors += 1
+                        
+                    if dist < student_min_dist:
+                        student_min_dist = dist
+                            
+                # CONSENSUS RULE:
+                # Require > 20% of total vectors to match to confirm identity.
+                # This filters out "bad apple" embeddings that match everyone.
+                
+                match_ratio = passing_vectors / total_vectors if total_vectors > 0 else 0
+                
+                # Minimum requirement: 2 matches OR 20% of total
+                required_matches = max(2, int(total_vectors * 0.20))
+                
+                if passing_vectors >= required_matches:
+                    student_metrics[student_id] = {
+                        "passing_vectors": passing_vectors,
+                        "match_ratio": match_ratio,
+                        "min_dist": student_min_dist
+                    }
+                    # #region agent log
+                    _debug_log("face_recognizer.py:146", "candidate_consensus_passed", {
+                        "model": model_name,
+                        "student_id": student_id,
+                        "passing_vectors": passing_vectors,
+                        "match_ratio": match_ratio,
+                        "total_vectors": total_vectors,
+                        "min_dist": float(student_min_dist) if student_min_dist < float("inf") else None
+                    }, hypothesis_id="H2")
+                    # #endregion
+                else:
+                    if passing_vectors > 0:
+                        # #region agent log
+                        _debug_log("face_recognizer.py:155", "candidate_consensus_failed", {
+                            "model": model_name,
+                            "student_id": student_id,
+                            "passing_vectors": passing_vectors,
+                            "total_vectors": total_vectors,
+                            "required_matches": required_matches
+                        }, hypothesis_id="H2")
+                        # #endregion
+                        pass
+
+                if student_min_dist < float("inf"):
+                    all_best_distances.append(student_min_dist)
+
+            # Decide winner based on strongest consensus ratio, tie-break by distance
+            if student_metrics:
+                sorted_metrics = sorted(
+                    student_metrics.items(),
+                    key=lambda x: (-x[1]["match_ratio"], x[1]["min_dist"])
+                )
+                best_id_for_model = sorted_metrics[0][0]
+                best_min_dist = sorted_metrics[0][1]["min_dist"]
+                
+                model_results[model_name] = {"id": best_id_for_model, "dist": best_min_dist, "second_best_dist": float("inf")} # kept for compat
                 votes[best_id_for_model] = votes.get(best_id_for_model, 0) + 1
+                
+                # #region agent log
+                _debug_log("face_recognizer.py:177", "match_accepted", {
+                    "model": model_name,
+                    "best_id": best_id_for_model,
+                    "best_dist": float(best_min_dist),
+                    "gap": None
+                }, hypothesis_id="H2")
+                # #endregion
             else:
-                model_results[model_name] = {"id": None, "dist": min_dist}
-
+                model_results[model_name] = {"id": None, "dist": float("inf"), "second_best_dist": float("inf")}
+                # #region agent log
+                _debug_log("face_recognizer.py:144", "rejected_threshold", {
+                    "model": model_name,
+                    "reason": "failed_consensus_rule_all_students"
+                }, hypothesis_id="H2")
+                # #endregion
+                     
+        # If no models found a valid match, reject
         if not votes:
-            return {"match_found": False, "student_id": None, "confidence": 0.0}
-
-        # Find ID with most votes
-        winner_id = max(votes, key=votes.get)
-        num_models_run = len(source_embeddings)
-        vote_ratio = votes[winner_id] / num_models_run if num_models_run > 0 else 0
+            best_overall_dist = min(all_best_distances) if all_best_distances else float("inf")
+            logger.debug(f"No valid matches. Best distance: {best_overall_dist:.3f}")
+            # #region agent log
+            _debug_log("face_recognizer.py:181", "no_votes_final", {
+                "best_overall_dist": float(best_overall_dist) if best_overall_dist < float("inf") else None,
+                "model_results": {k: {"id": v.get("id"), "dist": float(v.get("dist")) if v.get("dist") < float("inf") else None} for k, v in model_results.items()}
+            }, hypothesis_id="H2")
+            # #endregion
+            return {
+                "match_found": False,
+                "student_id": None,
+                "confidence": 0.0,
+                "best_distance": best_overall_dist,
+                "model_results": model_results
+            }
         
-        # Adaptive Baseline: Ensemble vote
+        # Find winner (student with most votes)
+        winner_id = max(votes, key=votes.get)
+        num_models = len(source_embeddings)
+        vote_ratio = votes[winner_id] / num_models
+        
+        # Calculate average distance for winner
+        winner_distances = [r["dist"] for r in model_results.values() if r.get("id") == winner_id]
+        avg_distance = np.mean(winner_distances) if winner_distances else float("inf")
+        
+        # Final check: Require majority agreement (50% of models)
         match_found = vote_ratio >= ENSEMBLE_VOTING_THRESHOLD
         
-        # Override: If any model is SUPER confident, trust it!
-        # This helps if 2 models fail but 1 is 100% sure.
-        for model_name, res in model_results.items():
-            threshold = self.THRESHOLDS.get(model_name, 0.40)
-            if res["id"] is not None and res["dist"] <= (threshold * 0.7):
-                match_found = True
-                winner_id = res["id"]
-                logger.info(f"Strong match override for {model_name}: {winner_id} (dist: {res['dist']:.3f})")
-                break
-
+        # Calculate confidence (1.0 = perfect match, 0.0 = poor match)
+        if match_found:
+            # Confidence based on distance quality
+            avg_threshold = np.mean([self.THRESHOLDS.get(m, 0.40) for m in source_embeddings.keys()])
+            confidence = max(0.0, 1.0 - (avg_distance / avg_threshold))
+        else:
+            confidence = 0.0
+            logger.info(f"❌ REJECTED: Vote ratio {vote_ratio:.2f} < threshold {ENSEMBLE_VOTING_THRESHOLD:.2f}")
+        
+        # #region agent log
+        _debug_log("face_recognizer.py:213", "final_result", {
+            "match_found": match_found,
+            "winner_id": winner_id if match_found else None,
+            "vote_ratio": float(vote_ratio),
+            "votes": dict(votes),
+            "avg_distance": float(avg_distance) if avg_distance < float("inf") else None,
+            "confidence": float(confidence),
+            "ensemble_threshold": ENSEMBLE_VOTING_THRESHOLD,
+            "rejection_reason": "vote_ratio_too_low" if not match_found else None
+        }, hypothesis_id="H2")
+        # #endregion
+        
         return {
             "match_found": match_found,
             "student_id": winner_id if match_found else None,
             "vote_ratio": vote_ratio,
+            "best_distance": avg_distance,
+            "avg_distance": avg_distance,
+            "confidence": confidence,
             "model_results": model_results
         }

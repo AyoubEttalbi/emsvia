@@ -75,12 +75,17 @@ class EmbeddingsManager:
         """Return the dictionary of all embeddings (student_id -> {model_name: [vectors]})."""
         return self.embedding_cache
 
-    def add_embedding(self, session: Session, student_id: int, vector: np.ndarray, model_name: str = "Facenet512"):
+    def add_embedding(self, session: Session, student_id: int, vector: np.ndarray,
+                      model_name: str = "Facenet512", image_path: Optional[str] = None):
         """
         Add a new embedding to both DB and Cache.
+
+        Args:
+            image_path: Source image path, stored in the DB to enable incremental processing.
         """
         # Add to DB
-        success = self.db.add_face_embedding(session, student_id, vector, model_name=model_name)
+        success = self.db.add_face_embedding(session, student_id, vector,
+                                             model_name=model_name, image_path=image_path)
         if success:
             # Update Cache
             if student_id not in self.embedding_cache:

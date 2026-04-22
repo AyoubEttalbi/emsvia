@@ -30,6 +30,7 @@ DISTANCE_METRIC = os.getenv("DISTANCE_METRIC", "cosine")
 
 # Camera settings
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
+CAMERA_AUTO_SELECT = os.getenv("CAMERA_AUTO_SELECT", "True").lower() == "true"
 FRAME_WIDTH = int(os.getenv("CAMERA_WIDTH", "640"))
 FRAME_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "480"))
 FPS = int(os.getenv("CAMERA_FPS", "30"))
@@ -62,8 +63,9 @@ DEVICE = os.getenv("DEVICE", "cuda")
 GPU_MEMORY_FRACTION = float(os.getenv("GPU_MEMORY_FRACTION", "0.8"))
 ALLOW_GROWTH = os.getenv("ALLOW_GROWTH", "True").lower() == "true"
 USE_MIXED_PRECISION = os.getenv("USE_MIXED_PRECISION", "True").lower() == "true"
+TF_GPU_MEMORY_LIMIT = int(os.getenv("TF_GPU_MEMORY_LIMIT", "2500")) # MB
 
-# Model Toggles
+# Model Toggles.
 DETECTOR_RETINAFACE = os.getenv("DETECTOR_RETINAFACE", "True").lower() == "true"
 DETECTOR_MTCNN = os.getenv("DETECTOR_MTCNN", "False").lower() == "true"
 
@@ -121,7 +123,11 @@ SR_MIN_SIZE = int(os.getenv("SR_MIN_SIZE", "64"))
 # Phase 5: Ensemble Recognition
 USE_RECOGNITION_ENSEMBLE = os.getenv("USE_RECOGNITION_ENSEMBLE", "True").lower() == "true"
 RECOGNITION_MODELS = get_active_recognizers()
-ENSEMBLE_VOTING_THRESHOLD = float(os.getenv("ENSEMBLE_VOTING_THRESHOLD", "0.5"))
+ENSEMBLE_VOTING_THRESHOLD = float(os.getenv("ENSEMBLE_VOTING_THRESHOLD", "0.5"))  # 50% of models must agree
+# Legacy settings (kept for compatibility, not used in simplified algorithm)
+RECOGNITION_QUALITY_MULTIPLIER = float(os.getenv("RECOGNITION_QUALITY_MULTIPLIER", "1.0"))
+STRONG_MATCH_MULTIPLIER = float(os.getenv("STRONG_MATCH_MULTIPLIER", "0.6"))
+MIN_CONFIDENCE_GAP = float(os.getenv("MIN_CONFIDENCE_GAP", "0.15"))  # Gap between best and 2nd best (hardcoded in algorithm)
 
 # Phase 6: Temporal Smoothing
 TRACKING_MAX_DISAPPEARED = int(os.getenv("TRACKING_MAX_DISAPPEARED", "15"))

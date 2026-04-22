@@ -123,7 +123,7 @@ if gpus:
     try:
         tf.config.set_logical_device_configuration(
             gpus[0],
-            [tf.config.LogicalDeviceConfiguration(memory_limit=2500)] # ~2.5GB limit
+            [tf.config.LogicalDeviceConfiguration(memory_limit=int(os.getenv('TF_GPU_MEMORY_LIMIT', '3500')))]
         )
     except Exception:
         pass
@@ -135,7 +135,8 @@ sys.path.append(str(BASE_DIR))
 from config.settings import (
     DATABASE_URL, IDENTITY_STABILITY_THRESHOLD, MIN_BUFFER_FOR_RECOG, 
     RECOGNITION_MODELS, DEBUG_MODE, DETECTION_SKIP_FRAMES, RECOGNITION_INTERVAL_FRAMES,
-    BATCH_PROCESSING, BATCH_SIZE, CLEAR_CACHE_INTERVAL, USE_GPU
+    BATCH_PROCESSING, BATCH_SIZE, CLEAR_CACHE_INTERVAL, USE_GPU, DETECTION_CONFIDENCE,
+    CAMERA_INDEX, CAMERA_AUTO_SELECT
 )
 from database.crud import AttendanceDB
 from models.face_detector import FaceDetector
@@ -146,9 +147,8 @@ from core.camera_handler import CameraHandler
 from core.attendance_manager import AttendanceManager
 from core.unknown_face_handler import UnknownFaceHandler
 from core.tracker import FaceTracker
-from recognition.batch_recognizer import BatchRecognizer
-from detection.parallel_detector import ParallelDetector
-from utils.gpu_utils import GPUMemoryManager
+from detection.async_detector import AsyncDetector
+from recognition.async_recognizer import AsyncRecognizer
 
 # Configure Logging
 logging.basicConfig(
@@ -165,12 +165,17 @@ def main():
     logger.info("🚀 Starting Optimized Industry-Grade Attendance System")
     logger.info("="*60)
     
-    # 1. Initialize GPU Manager
+    # 0. Initialize GPU Manager
     gpu_mgr = GPUModelManager()
     if not gpu_mgr.is_gpu_ready():
         logger.warning("⚠️  GPU not detected! Performance will be affected.")
     else:
         logger.info(f"✅ GPU Ready: {gpu_mgr.get_memory_summary()}")
+
+    # 1. Initialize Models
+    logger.info("📦 Loading models...")
+    detector = FaceDetector(min_confidence=DETECTION_CONFIDENCE)
+    recognizer = FaceRecognizer()
     
     # 2. Initialize Database and Embeddings
     db_manager = AttendanceDB(DATABASE_URL)
@@ -182,19 +187,18 @@ def main():
     session.close()
     logger.info(f"👨‍🎓 Loaded {len(student_names)} students from database")
     
-    # 3. Load Models
-    logger.info("📦 Loading models...")
-    detector = FaceDetector()
-    recognizer = FaceRecognizer()
+    # 3. Async detection (runs in background thread for smooth video)
+    async_detector = AsyncDetector(detector)
+    async_detector.start()
+    logger.info("🔄 Async detection thread started")
     
-    # Parallel detection handler
-    if BATCH_PROCESSING and gpu_mgr.is_gpu_ready():
-        parallel_detector = ParallelDetector(detector)
-    else:
-        parallel_detector = None
+    # 3b. Async recognition (runs in background thread, no UI blocking)
+    async_recognizer = AsyncRecognizer(detector, recognizer, em_manager)
+    async_recognizer.start()
+    logger.info("🔄 Async recognition thread started")
     
     # 4. Core Handlers
-    camera = CameraHandler(source=0).start()
+    camera = CameraHandler(source=CAMERA_INDEX, auto_select=CAMERA_AUTO_SELECT).start()
     attend_mgr = AttendanceManager(db_manager)
     unknown_mgr = UnknownFaceHandler(db_manager)
     tracker = FaceTracker()
@@ -206,6 +210,7 @@ def main():
     logger.info(f"⚙️  Recognition Interval: {recognition_interval} frames")
     
     frame_idx = 0
+    fps = 0.0
     fps_history = []
     last_gpu_log_time = time.time()
     
@@ -214,30 +219,33 @@ def main():
     try:
         while True:
             loop_start = time.time()
+            
             ret, frame = camera.read()
-            if not ret or frame is None: continue
+            if not ret or frame is None: 
+                time.sleep(0.005)
+                continue
             
             frame_idx += 1
             display_frame = camera.preprocess_frame(frame)
             session = db_manager.get_session()
             
+            t_det = 0
+            t_rec = 0
+            
             try:
-                # 1. DETECTION & TRACKING
+                # --- ASYNC DETECTION & TRACKING ---
+                # Submit frame to background thread (non-blocking)
+                # Returns latest available detections (may be from previous frame)
                 t_det_start = time.time()
-                if frame_idx % detection_skip == 0 or frame_idx == 1:
-                    if parallel_detector and gpu_mgr.is_gpu_ready():
-                        faces = parallel_detector.detect_ensemble(frame, use_tiling=False)
-                    else:
-                        faces = detector.detect_faces(frame)
-                    tracked_faces = tracker.update(faces)
-                else:
-                    tracked_faces = tracker.update([])
+                faces = async_detector.detect_async(frame)
                 t_det = (time.time() - t_det_start) * 1000
+                
+                # Tracker smooths between detection updates
+                tracked_faces = tracker.update(faces)
                 
                 active_track_ids = {f['track_id'] for f in tracked_faces}
                 
-                # 2. PROCESS TRACKS
-                t_rec = 0
+                # --- PROCESS TRACKS ---
                 for face in tracked_faces:
                     x, y, w, h = face['box']
                     tid = face['track_id']
@@ -252,7 +260,7 @@ def main():
                     color = (255, 128, 0) # Orange for tracking
                     label = f"Scanning... (T:{tid})"
                     
-                    # 3. RECOGNITION (Event-based)
+                    # --- RECOGNITION (Async, non-blocking) ---
                     stable_id = track_data['current_identity']
                     needs_recognition = False
                     
@@ -261,33 +269,27 @@ def main():
                     else:
                         if track_data['frame_count'] % recognition_interval == 0: needs_recognition = True
 
+                    # Submit recognition job to background thread (non-blocking)
                     if needs_recognition:
-                        t_rec_start = time.time()
-                        face_crop = detector.extract_face(frame, [x, y, w, h])
-                        if face_crop is not None and detector.check_image_quality(face_crop)['passed']:
-                            current_embeddings = recognizer.generate_embeddings(face_crop)
-                            if current_embeddings:
-                                all_known = em_manager.get_all_embeddings()
-                                match_result = recognizer.find_best_match(current_embeddings, all_known)
-                                track_data['last_match'] = match_result
-                                
-                                new_id = match_result["student_id"] if match_result["match_found"] else None
-                                
-                                if new_id:
-                                    if new_id == track_data['current_identity']:
-                                        track_data['identity_stability_counter'] = 0
-                                    else:
-                                        track_data['identity_stability_counter'] += 1
-                                        if track_data['identity_stability_counter'] >= IDENTITY_STABILITY_THRESHOLD:
-                                            track_data['current_identity'] = new_id
-                                            track_data['identity_stability_counter'] = 0
-                                            logger.info(f"✨ Track {tid} identified as: {student_names.get(new_id, new_id)}")
-                                else:
-                                    if track_data['frame_count'] % 100 == 0:
-                                        unknown_mgr.handle_unknown_face(session, face_crop, confidence=0.0)
-                        t_rec += (time.time() - t_rec_start) * 1000
+                        async_recognizer.submit(tid, frame, [x, y, w, h])
+                    
+                    # Poll for recognition results (non-blocking)
+                    rec_result = async_recognizer.get_result(tid)
+                    if rec_result is not None:
+                        track_data['last_match'] = rec_result
+                        new_id = rec_result["student_id"] if rec_result["match_found"] else None
+                        
+                        if new_id:
+                            if new_id == track_data['current_identity']:
+                                track_data['identity_stability_counter'] = 0
+                            else:
+                                track_data['identity_stability_counter'] += 1
+                                if track_data['identity_stability_counter'] >= IDENTITY_STABILITY_THRESHOLD:
+                                    track_data['current_identity'] = new_id
+                                    track_data['identity_stability_counter'] = 0
+                                    logger.info(f"✨ Track {tid} identified as: {student_names.get(new_id, new_id)}")
 
-                    # 4. MARK ATTENDANCE & UI
+                    # --- MARK ATTENDANCE & DRAW UI ---
                     stable_id = track_data['current_identity']
                     if stable_id:
                         name = student_names.get(stable_id, f"ID: {stable_id}")
@@ -303,38 +305,44 @@ def main():
                 
                 attend_mgr.clean_stale_tracks(active_track_ids)
                 
+            except Exception as e:
+                logger.error(f"Error in main loop: {e}")
             finally:
                 session.close()
-            
-            # FPS Calculation
-            fps = camera.get_fps()
-            fps_history.append(fps)
-            if len(fps_history) > 30: fps_history.pop(0)
-            avg_fps = sum(fps_history) / len(fps_history)
-            
-            # Display Overlays
-            cv2.putText(display_frame, f"FPS: {avg_fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(display_frame, f"Det: {t_det:.0f}ms | Rec: {t_rec:.0f}ms", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+            # --- DISPLAY ---
+            cv2.putText(display_frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(display_frame, f"Det: {t_det:.0f}ms | Rec: {t_rec:.0f}ms", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             if gpu_mgr.is_gpu_ready():
-                cv2.putText(display_frame, gpu_mgr.get_memory_summary(), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                cv2.putText(display_frame, gpu_mgr.get_memory_summary(), (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
             
             cv2.imshow("Industry-Grade Attendance System", display_frame)
             
-            if gpu_mgr.is_gpu_ready():
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+            # FPS Calculation
+            loop_time = time.time() - loop_start
+            fps_history.append(loop_time)
+            if len(fps_history) > 30: fps_history.pop(0)
+            fps = 1.0 / (sum(fps_history) / len(fps_history)) if fps_history else 0
+            
+            # Periodic GPU stats log (every 30 seconds)
+            if gpu_mgr.is_gpu_ready() and time.time() - last_gpu_log_time > 30:
                 gpu_mgr.auto_clear_cache()
-                if time.time() - last_gpu_log_time > 30:
-                    logger.info(f"📊 Stats - FPS: {avg_fps:.1f} | Det: {t_det:.1f}ms | Rec: {t_rec:.1f}ms | GPU: {gpu_mgr.get_memory_summary()}")
-                    last_gpu_log_time = time.time()
-            
-            if cv2.waitKey(1) & 0xFF == ord('q'): break
-            
+                logger.info(f"📊 Stats - FPS: {fps:.1f} | Det: {t_det:.1f}ms | Rec: {t_rec:.1f}ms | GPU: {gpu_mgr.get_memory_summary()}")
+                last_gpu_log_time = time.time()
+
     except Exception as e:
         logger.error(f"❌ Error: {e}")
         logger.error(traceback.format_exc())
     finally:
+        async_detector.stop()
+        async_recognizer.stop()
         camera.stop()
         cv2.destroyAllWindows()
         logger.info("🧹 Cleanup complete.")
 
 if __name__ == "__main__":
     main()
+

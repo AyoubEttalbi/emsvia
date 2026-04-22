@@ -2,27 +2,100 @@ import cv2
 import threading
 import time
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+def detect_available_cameras(max_index: int = 5) -> List[Dict]:
+    """
+    Detect all available cameras and return their info.
+    
+    Returns:
+        List of dicts with 'index', 'name', and 'working' keys
+    """
+    cameras = []
+    
+    for i in range(max_index + 1):
+        try:
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    backend_name = cap.getBackendName()
+                    cameras.append({
+                        'index': i,
+                        'name': f"{backend_name} (Index {i})",
+                        'working': True
+                    })
+                    logger.info(f"Found camera at index {i}: {backend_name}")
+                cap.release()
+        except Exception as e:
+            logger.debug(f"Camera {i} not available: {e}")
+    
+    return cameras
+
+def select_camera(cameras: List[Dict]) -> int:
+    """
+    Let user select a camera from available options.
+    
+    Args:
+        cameras: List of available camera dicts
+        
+    Returns:
+        Selected camera index
+    """
+    if not cameras:
+        print("No cameras found!")
+        return 0
+    
+    if len(cameras) == 1:
+        print(f"Using only available camera: {cameras[0]['name']}")
+        return cameras[0]['index']
+    
+    print("\n" + "=" * 50)
+    print("📷 Available Cameras:")
+    print("=" * 50)
+    for cam in cameras:
+        print(f"  [{cam['index']}] {cam['name']}")
+    print("=" * 50)
+    
+    while True:
+        try:
+            choice = input("\nSelect camera index (or press Enter for default 0): ").strip()
+            if choice == "":
+                return 0
+            idx = int(choice)
+            if any(c['index'] == idx for c in cameras):
+                return idx
+            print(f"Invalid index. Choose from: {[c['index'] for c in cameras]}")
+        except ValueError:
+            print("Please enter a valid number.")
 
 class CameraHandler:
     """
     Handles camera operations in a separate thread for low-latency frame access.
     """
     
-    def __init__(self, source: int = 0, resolution: Tuple[int, int] = (640, 480)):
+    def __init__(self, source: int = 0, resolution: Tuple[int, int] = (640, 480), auto_select: bool = False):
         """
         Initialize the Camera Handler.
         
         Args:
             source: Camera index or video path.
             resolution: Desired capture resolution (width, height).
+            auto_select: If True and source is int, scan for cameras.
         """
         self.source = source
         self.resolution = resolution
-        self.cap = cv2.VideoCapture(source)
+        
+        # Auto-detect and select camera if needed
+        if auto_select and isinstance(source, int):
+            cameras = detect_available_cameras()
+            if cameras:
+                self.source = select_camera(cameras)
+        
+        self.cap = cv2.VideoCapture(self.source)
         
         if not self.cap.isOpened():
             logger.error(f"Failed to open camera source: {source}")
@@ -45,7 +118,16 @@ class CameraHandler:
         """Start the camera capture thread."""
         t = threading.Thread(target=self._update, args=(), daemon=True)
         t.start()
-        logger.info(f"Camera thread started for source {self.source}")
+        
+        # Wait for first frame (up to 3 seconds)
+        for _ in range(30):
+            with self.lock:
+                if self.ret and self.frame is not None:
+                    logger.info(f"Camera {self.source} started successfully.")
+                    return self
+            time.sleep(0.1)
+        
+        logger.warning(f"Camera {self.source} started but first frame is slow.")
         return self
 
     def _update(self):
@@ -57,6 +139,10 @@ class CameraHandler:
                 self.ret = ret
                 self.frame = frame
                 
+            if not ret:
+                time.sleep(0.1)
+                continue
+                
             # Calculate FPS
             curr_time = time.time()
             if self.prev_time > 0:
@@ -65,7 +151,7 @@ class CameraHandler:
                     self.fps = 1.0 / time_diff
             self.prev_time = curr_time
             
-            # Tiny sleep to prevent 100% CPU usage if capture is faster than needed
+            # Tiny sleep to prevent 100% CPU usage
             time.sleep(0.001)
 
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
