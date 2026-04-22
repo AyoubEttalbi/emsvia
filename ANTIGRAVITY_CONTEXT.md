@@ -33,22 +33,38 @@
 - Requires a `MIN_CONFIDENCE_GAP` (e.g., 0.12 or 12%) and `RECOGNITION_QUALITY_MULTIPLIER` (e.g., 0.85). If the gap is too small, it rejects the face as an ambiguous false positive.
 
 ## 5. Directory Structure Reference
+- `api/`: FastAPI backend (Routes, Schemas, Dependencies).
 - `config/`: Settings (`settings.py`), database configs.
 - `core/`: Business logic, trackers (`tracker.py`), attendance logic.
 - `detection/`: Tiling, ensemble detection logic.
+- `frontend/`: Premium React/Vite dashboard (Tailwind 4, Glassmorphism).
 - `models/`: ML wrappers (`face_detector.py`, `face_recognizer.py`, `embeddings_manager.py`, `gpu_manager.py`).
 - `preprocessing/`: Lighting fixes (`clahe.py`, `exposure.py`).
-- `scripts/`: Enrollment, embedding generation, testing.
+- `scripts/`: Enrollment automation, embedding generation, testing.
 
-## 6. Current Project Status
-- **Completed:** Phases 1-4 (Foundations, DB, Recognition) and Phase 8 (GPU/Accuracy Integrations).
+## 6. Premium Admin Dashboard (Phase 8-13)
+The system now features a production-grade administrative command center:
+- **📊 Real-Time Analytics**: Live attendance metrics, trend charts, and student directory.
+- **🛡️ Security Audit Hub**: Unknown face review system with Review/Dismiss/Enroll workflows.
+- **🎥 Surveillance Engine**: Low-latency MJPEG camera streaming with dynamic source detection and manual toggle controls.
+- **📉 Hardware & Software Telemetry**: Live GPU VRAM monitoring + Real-time engine log stream (tailing `attendance.log`).
+- **👨‍🎓 Student Enrollment**: Premium modal with multi-photo upload support; automatically triggers background embedding vectorization.
+
+## 7. Current Project Status
+- **Completed:** 
+  - Phases 1-8 (Accuracy, GPU Bridge, Database Core).
+  - Phase 9-11 (FastAPI Backend, Surveillance Streaming, Secure Reviews).
+  - Phase 12 (Hardware/Software Telemetry, Log Streaming).
+  - Phase 13 (Automated AI Pipeline / Rebuild on Enrollment).
 - **In Progress / Pending:**
-  - Phase 5: Advanced attendance logic (manual overrides, stats).
-  - Phase 6: Mask/Glasses logic & Periocular recognition.
-  - Phase 7: FastAPI endpoints and JWT auth.
-  - Phase 8: Streamlit Admin / Analytics Dashboard.
+  - Phase 14: AI Precision Tuning (Ensemble Voting, NMS optimization).
+  - Phase 15: Face Anti-Spoofing (Liveness detection).
+  - Phase 16: Selective Super-Resolution implementation in live pipeline.
+  - Phase 17: Enterprise Security (JWT Authentication & RBAC).
 
 ## AI Reminders
-- Do NOT alter the async/threaded architecture without considering FPS drops.
-- Always check `config/settings.py` for thresholds before hardcoding values.
-- Respect the cuDNN 8/9 Version Bridge when modifying deep learning imports.
+- **Engine Control**: The Recognition Engine (`main_gpu.py`) must be running separately from the API for full system functionality.
+- **Vectorization**: Enrollment *automatically* triggers `scripts/generate_embeddings.py` via background process in the API.
+- **Camera Access**: If streaming fails, check if the camera index is locked or if `/dev/video*` permissions are set.
+- **HW Telemetry**: GPU stats depend on `pynvml` and `torch.cuda`.
+- **Styling**: All dashboard UI uses **Tailwind CSS 4** and Lucide React icons.
