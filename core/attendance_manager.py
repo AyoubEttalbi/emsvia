@@ -26,7 +26,8 @@ class AttendanceManager:
         self.last_marked: Dict[int, float] = {}             # student_id -> timestamp (unix)
         
     def process_recognition(self, session: Session, student_id: int, 
-                             track_id: int, confidence: float = 0.0) -> bool:
+                             track_id: int, confidence: float = 0.0,
+                             entry_type: str = "entry") -> bool:
         """
         Process a recognition event using temporal evidence.
         """
@@ -45,11 +46,15 @@ class AttendanceManager:
             
             if (now - last_time) >= self.cooldown_seconds:
                 # Mark in Database
-                success = self.db.mark_attendance(session, student_id, confidence=confidence)
+                success = self.db.mark_attendance(
+                    session, student_id, 
+                    confidence=confidence,
+                    entry_type=entry_type
+                )
                 
                 if success:
                     self.last_marked[student_id] = now
-                    logger.info(f"Attendance marked for student {student_id} (Track: {track_id})")
+                    logger.info(f"Attendance marked for student {student_id} (Track: {track_id}, Role: {entry_type})")
                     # Clear evidence for THIS track to prevent re-marking
                     del self.track_evidence[track_id]
                     return True
@@ -63,7 +68,8 @@ class AttendanceManager:
     def manual_mark_attendance(self, session: Session, student_id: int, 
                                status: str = "present", 
                                confidence: float = 1.0,
-                               camera_id: str = "manual_override") -> bool:
+                               camera_id: str = "manual_override",
+                               entry_type: str = "entry") -> bool:
         """
         Manually mark attendance for a student, bypassing consistency checks.
         """
@@ -72,7 +78,8 @@ class AttendanceManager:
             student_id, 
             confidence=confidence, 
             status=status, 
-            camera_id=camera_id
+            camera_id=camera_id,
+            entry_type=entry_type
         )
         if success:
             self.last_marked[student_id] = time.time()

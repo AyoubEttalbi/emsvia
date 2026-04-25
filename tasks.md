@@ -248,9 +248,10 @@
 ## Phase 8: Admin Dashboard
 ### 8.1 Dashboard Development
 - [x] Create Streamlit application (ui/admin_dashboard.py)
-- [x] Implement authentication/login page (Base layout ready)
+- [x] Implement authentication/login page
 - [x] Create main dashboard with statistics
 - [x] Add real-time attendance monitoring view
+- [x] Integrate high-performance React dashboard (frontend/)
 
 ### 8.2 Student Management UI
 - [x] Create student list view with search/filter
@@ -275,6 +276,8 @@
 - [x] Add system health monitoring
 - [x] Create logs viewer
 - [x] Add database backup/restore UI
+- [x] Implement Remote AI Engine Control (Start/Stop/Status)
+- [x] Enable AI-Processed Surveillance Streaming (FrameBridge)
 
 ### 8.5 Analytics Dashboard
 - [x] Create attendance trends visualization

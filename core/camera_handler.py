@@ -4,8 +4,15 @@ import time
 import logging
 from typing import Optional, Tuple, List, Dict
 import numpy as np
+import os
+import platform
 
 logger = logging.getLogger(__name__)
+
+def _linux_video_device_exists(index: int) -> bool:
+    if platform.system().lower() != "linux":
+        return True
+    return os.path.exists(f"/dev/video{index}")
 
 def detect_available_cameras(max_index: int = 5) -> List[Dict]:
     """
@@ -17,6 +24,8 @@ def detect_available_cameras(max_index: int = 5) -> List[Dict]:
     cameras = []
     
     for i in range(max_index + 1):
+        if not _linux_video_device_exists(i):
+            continue
         try:
             cap = cv2.VideoCapture(i)
             if cap.isOpened():
@@ -29,13 +38,13 @@ def detect_available_cameras(max_index: int = 5) -> List[Dict]:
                         'working': True
                     })
                     logger.info(f"Found camera at index {i}: {backend_name}")
-                cap.release()
+            cap.release()
         except Exception as e:
             logger.debug(f"Camera {i} not available: {e}")
     
     return cameras
 
-def select_camera(cameras: List[Dict]) -> int:
+def select_camera(cameras: List[Dict], interactive: bool = True) -> int:
     """
     Let user select a camera from available options.
     
@@ -60,11 +69,15 @@ def select_camera(cameras: List[Dict]) -> int:
         print(f"  [{cam['index']}] {cam['name']}")
     print("=" * 50)
     
+    if not interactive:
+        logger.info(f"Non-interactive mode: using default camera index {cameras[0]['index']}")
+        return cameras[0]['index']
+
     while True:
         try:
             choice = input("\nSelect camera index (or press Enter for default 0): ").strip()
             if choice == "":
-                return 0
+                return cameras[0]['index']
             idx = int(choice)
             if any(c['index'] == idx for c in cameras):
                 return idx
@@ -77,7 +90,7 @@ class CameraHandler:
     Handles camera operations in a separate thread for low-latency frame access.
     """
     
-    def __init__(self, source: int = 0, resolution: Tuple[int, int] = (640, 480), auto_select: bool = False):
+    def __init__(self, source: int = 0, resolution: Tuple[int, int] = (640, 480), auto_select: bool = False, interactive: bool = True):
         """
         Initialize the Camera Handler.
         
@@ -93,13 +106,24 @@ class CameraHandler:
         if auto_select and isinstance(source, int):
             cameras = detect_available_cameras()
             if cameras:
-                self.source = select_camera(cameras)
+                self.source = select_camera(cameras, interactive=interactive)
         
         self.cap = cv2.VideoCapture(self.source)
-        
+
+        if not self.cap.isOpened() and isinstance(self.source, int):
+            # If the requested index is invalid/unplugged, fall back to the first working camera.
+            # This avoids endless OpenCV warnings from repeated failed opens higher up the stack.
+            cameras = detect_available_cameras(max_index=max(5, int(self.source) + 2))
+            if cameras:
+                fallback = cameras[0]["index"]
+                logger.warning(f"Camera index {self.source} not available. Falling back to camera {fallback}.")
+                self.source = fallback
+                self.cap.release()
+                self.cap = cv2.VideoCapture(self.source)
+
         if not self.cap.isOpened():
-            logger.error(f"Failed to open camera source: {source}")
-            raise RuntimeError(f"Could not open camera {source}")
+            logger.error(f"Failed to open camera source: {self.source}")
+            raise RuntimeError(f"Could not open camera {self.source}")
             
         # Set resolution
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, resolution[0])

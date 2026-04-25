@@ -17,6 +17,7 @@ import traceback
 import time
 import cv2
 import numpy as np
+import argparse
 from pathlib import Path
 from sqlalchemy.orm import Session
 
@@ -149,6 +150,7 @@ from core.unknown_face_handler import UnknownFaceHandler
 from core.tracker import FaceTracker
 from detection.async_detector import AsyncDetector
 from recognition.async_recognizer import AsyncRecognizer
+from core.streaming import FrameBridge
 
 # Configure Logging
 logging.basicConfig(
@@ -161,6 +163,16 @@ def main():
     """
     GPU-Optimized main entry point for real-time attendance system.
     """
+    parser = argparse.ArgumentParser(description="EMSVIA Recognition Engine")
+    parser.add_argument("--headless", action="store_true", help="Run without UI window")
+    parser.add_argument("--camera", type=int, help="Camera index to use (overrides settings)")
+    parser.add_argument("--role", type=str, choices=["entry", "exit"], default="entry", help="Engine role: entry or exit")
+    parser.add_argument("--bridge", type=str, help="Unique bridge name for shared memory")
+    args = parser.parse_args()
+    
+    # Calculate unique bridge name if not provided
+    bridge_name = args.bridge if args.bridge else f"emsvia_cam_{args.camera if args.camera is not None else 0}"
+    
     logger.info("="*60)
     logger.info("🚀 Starting Optimized Industry-Grade Attendance System")
     logger.info("="*60)
@@ -198,10 +210,16 @@ def main():
     logger.info("🔄 Async recognition thread started")
     
     # 4. Core Handlers
-    camera = CameraHandler(source=CAMERA_INDEX, auto_select=CAMERA_AUTO_SELECT).start()
+    cam_source = args.camera if args.camera is not None else CAMERA_INDEX
+    camera = CameraHandler(
+        source=cam_source, 
+        auto_select=CAMERA_AUTO_SELECT if args.camera is None else False,
+        interactive=not args.headless
+    ).start()
     attend_mgr = AttendanceManager(db_manager)
     unknown_mgr = UnknownFaceHandler(db_manager)
     tracker = FaceTracker()
+    bridge = FrameBridge(bridge_name)
     
     # 5. Processing Settings
     detection_skip = DETECTION_SKIP_FRAMES
@@ -295,7 +313,7 @@ def main():
                         name = student_names.get(stable_id, f"ID: {stable_id}")
                         label = f"{name}"
                         color = (0, 255, 0) # Green
-                        attend_mgr.process_recognition(session, stable_id, track_id=tid, confidence=1.0)
+                        attend_mgr.process_recognition(session, stable_id, track_id=tid, confidence=1.0, entry_type=args.role)
                     elif track_data.get('last_match') and not track_data['last_match']['match_found']:
                         label = f"Unknown (T:{tid})"
                         color = (0, 0, 255) # Red
@@ -310,13 +328,18 @@ def main():
             finally:
                 session.close()
 
-            # --- DISPLAY ---
-            cv2.putText(display_frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(display_frame, f"Det: {t_det:.0f}ms | Rec: {t_rec:.0f}ms", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            if gpu_mgr.is_gpu_ready():
-                cv2.putText(display_frame, gpu_mgr.get_memory_summary(), (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-            
-            cv2.imshow("Industry-Grade Attendance System", display_frame)
+            # --- BROADCAST & DISPLAY ---
+            # Push processed frame to shared memory for API/Dashboard
+            bridge.push(display_frame, meta={
+                'fps': round(fps, 1),
+                'gpu': gpu_mgr.get_memory_summary() if gpu_mgr.is_gpu_ready() else "CPU Mode",
+                'active_tracks': len(active_track_ids),
+                'camera_id': cam_source,
+                'role': args.role
+            })
+
+            if not args.headless:
+                cv2.imshow("Industry-Grade Attendance System", display_frame)
             
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -340,7 +363,9 @@ def main():
         async_detector.stop()
         async_recognizer.stop()
         camera.stop()
-        cv2.destroyAllWindows()
+        bridge.clear()
+        if not args.headless:
+            cv2.destroyAllWindows()
         logger.info("🧹 Cleanup complete.")
 
 if __name__ == "__main__":

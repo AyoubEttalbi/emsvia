@@ -134,6 +134,7 @@ class AttendanceDB:
 
     def mark_attendance(self, session: Session, student_id: int, confidence: float, 
                         status: str = "present", camera_id: str = "main_camera", 
+                        entry_type: str = "entry",
                         image_path: Optional[str] = None) -> Optional[AttendanceRecord]:
         """Log a new attendance record."""
         try:
@@ -142,6 +143,7 @@ class AttendanceDB:
                 confidence_score=confidence,
                 status=status,
                 camera_id=camera_id,
+                entry_type=entry_type,
                 image_path=image_path
             )
             session.add(record)

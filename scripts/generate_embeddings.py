@@ -101,6 +101,7 @@ def generate_embeddings(incremental=True):
     session = db_manager.get_session()
     recognizer = FaceRecognizer()
     em_manager = EmbeddingsManager(db_manager)
+    em_manager.load_embeddings(session)
 
     try:
         images_root = BASE_DIR / "data" / "student_images"

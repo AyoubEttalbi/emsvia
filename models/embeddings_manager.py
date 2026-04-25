@@ -83,6 +83,11 @@ class EmbeddingsManager:
         Args:
             image_path: Source image path, stored in the DB to enable incremental processing.
         """
+        # SAFETY CHECK: Ensure cache is loaded before adding and saving
+        if not self.cache_loaded:
+            logger.info("Cache not loaded before add_embedding. Loading now to prevent data loss.")
+            self.load_embeddings(session)
+
         # Add to DB
         success = self.db.add_face_embedding(session, student_id, vector,
                                              model_name=model_name, image_path=image_path)

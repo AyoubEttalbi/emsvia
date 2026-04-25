@@ -274,6 +274,7 @@ def collect_student_data():
                 print("\nInitializing Face Recognizer and Embedding Manager...")
                 recognizer = FaceRecognizer()
                 em_manager = EmbeddingsManager(db_manager)
+                em_manager.load_embeddings(session)
                 
                 success, total = process_student_images(session, student, images_dir, recognizer, em_manager)
                 print(f"Successfully generated {success}/{total} embeddings for {student_id}.")

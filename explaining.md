@@ -83,6 +83,12 @@ Each directory in this project serves a distinct purpose in the AI lifecycle:
 - **`attendance_manager.py`**: Manages the business logic for logging attendance and cooldowns.
 - **`tracker.py`**: Our custom high-speed tracker that maintains ID consistency between AI checks.
 
+### 📁 `api/` (The "Bridge")
+- **`main.py`**: The central communication hub. Proxies AI-processed frames to the dashboard and manages engine life-cycles.
+
+### 📁 `frontend/` (The "Command Center")
+- **`LiveCameras.jsx`**: The primary surveillance interface. Allows admins to toggle the AI recognition engine and view processed feeds in real-time.
+
 ---
 
 ## 4. The Path to Industry-Grade Performance
@@ -138,6 +144,17 @@ Tuning the system is done entirely via environment variables.
 | `DETECTION_SKIP_FRAMES` | Runs detection every N frames. | `10` (High Speed) |
 | `RECOGNITION_INTERVAL` | Re-identifies tracks every N frames. | `30` |
 | `IDENTITY_STABILITY_THRESHOLD` | Samples needed before "Locking" an ID. | `3` - `5` |
+| `HEADLESS_MODE` | Runs engine without local UI window for dashboard use. | `--headless` |
+
+---
+
+## 7. High-Performance Integration (Engine ↔ Dashboard)
+
+The system uses a **Inter-Process Frame Bridge** for zero-latency surveillance:
+1.  **Frame Producer**: `main_gpu.py` processes frames and writes them directly to shared memory (`/dev/shm`).
+2.  **State Signaling**: A JSON heartbeat maintains synchronization between the Python engine and the FastAPI server.
+3.  **Proxy Streaming**: The API serves these frames as an MJPEG stream, switching automatically between Raw or AI feed based on engine availability.
+4.  **Process Management**: Admins can cold-boot or shutdown the GPU pipeline directly from the dashboard via the API bridge.
 
 ---
 

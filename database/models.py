@@ -58,6 +58,7 @@ class AttendanceRecord(Base):
     camera_id = Column(String(50), default="main_camera")
     image_path = Column(String(255))  # Snapshot of the recognition event
     status = Column(String(20), default="present")  # present, late, excused
+    entry_type = Column(String(20), default="entry", index=True) # entry, exit
     
     student = relationship("Student", back_populates="attendance_records")
 
