@@ -219,7 +219,18 @@ def main():
     attend_mgr = AttendanceManager(db_manager)
     unknown_mgr = UnknownFaceHandler(db_manager)
     tracker = FaceTracker()
-    bridge = FrameBridge(bridge_name)
+    # Stream throttling for the web dashboard (keeps MJPEG smooth, reduces freezes)
+    stream_fps = int(os.getenv("STREAM_FPS", "15"))
+    stream_jpeg_q = int(os.getenv("STREAM_JPEG_QUALITY", "65"))
+    stream_w = os.getenv("STREAM_WIDTH", "").strip()
+    stream_h = os.getenv("STREAM_HEIGHT", "").strip()
+    bridge = FrameBridge(
+        bridge_name,
+        target_fps=stream_fps,
+        jpeg_quality=stream_jpeg_q,
+        stream_width=int(stream_w) if stream_w else None,
+        stream_height=int(stream_h) if stream_h else None,
+    )
     
     # 5. Processing Settings
     detection_skip = DETECTION_SKIP_FRAMES

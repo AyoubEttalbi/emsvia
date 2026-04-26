@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -14,6 +14,7 @@ import sys
 from core.streaming import FrameBridge
 from typing import Dict, Optional
 import platform
+import asyncio
 
 # Process management for recognition engine
 engine_processes: Dict[int, subprocess.Popen] = {}
@@ -54,8 +55,11 @@ def _shutdown_cleanup():
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, restrict this to Streamlit's domain
-    allow_credentials=True,
+    # Local dev: we don't rely on cookies here, so disable credentials.
+    # This avoids strict browser CORS rules and makes dev setup reliable.
+    allow_origins=["*"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -134,6 +138,11 @@ async def video_stream(cam_id: int = 0):
                            b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
                     time.sleep(0.03) # ~30 FPS
                     continue
+                # Engine is alive but a frame wasn't readable this instant.
+                # Do NOT fall back to raw camera here: it can conflict with the engine
+                # holding /dev/video* and cause periodic freezes/spam.
+                time.sleep(0.02)
+                continue
             
             # Fallback to Raw Feed
             # Avoid OpenCV spam when the device node doesn't exist (common on Linux).
@@ -176,6 +185,38 @@ async def video_stream(cam_id: int = 0):
             cap.release()
             
     return StreamingResponse(gen_frames(cam_id), media_type='multipart/x-mixed-replace; boundary=frame')
+
+
+@app.websocket("/ws/cameras/stream")
+async def ws_camera_stream(websocket: WebSocket, cam_id: int = 0, fps: int = 15):
+    """
+    WebSocket camera stream (binary JPEG frames).
+    Smoother than MJPEG <img> streaming in many browsers.
+
+    - If engine is running, frames come from FrameBridge.
+    - If engine is offline, we do NOT fallback to raw camera here (avoids device contention).
+    """
+    await websocket.accept()
+    bridge = FrameBridge(f"emsvia_cam_{cam_id}")
+    interval = 1.0 / max(1, min(int(fps), 60))
+
+    try:
+        while True:
+            frame_bytes, meta = bridge.get()
+            if frame_bytes:
+                # Send binary JPEG
+                await websocket.send_bytes(frame_bytes)
+                await asyncio.sleep(interval)
+            else:
+                # No frame available yet; wait briefly
+                await asyncio.sleep(0.05)
+    except WebSocketDisconnect:
+        return
+    except Exception:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 @app.get("/api/engine/status")
 async def engine_status():

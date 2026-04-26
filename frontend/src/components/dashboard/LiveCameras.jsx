@@ -1,7 +1,83 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Square, Maximize2, Shield, Activity, Wifi, Settings, RefreshCw, Cpu, Power, Zap, X } from 'lucide-react';
 import axios from 'axios';
 import { cn } from '../../lib/utils';
+
+const WS_BASE = 'ws://127.0.0.1:8000';
+
+function useCameraWebSocket(canvasRef, camIndex, enabled, fps = 15) {
+    const wsRef = useRef(null);
+    const lastUrlRef = useRef(null);
+
+    useEffect(() => {
+        if (!enabled || camIndex === undefined || camIndex === null) return;
+        const canvas = canvasRef?.current;
+        if (!canvas) return;
+
+        const ctx = canvas.getContext('2d', { alpha: false });
+        if (!ctx) return;
+
+        const wsUrl = `${WS_BASE}/ws/cameras/stream?cam_id=${camIndex}&fps=${fps}`;
+        const ws = new WebSocket(wsUrl);
+        ws.binaryType = 'arraybuffer';
+        wsRef.current = ws;
+
+        ws.onmessage = (evt) => {
+            try {
+                const bytes = evt.data;
+                if (!bytes) return;
+
+                const blob = new Blob([bytes], { type: 'image/jpeg' });
+                const url = URL.createObjectURL(blob);
+
+                const img = new Image();
+                img.onload = () => {
+                    // Fit image into canvas while keeping aspect ratio
+                    const cw = canvas.width;
+                    const ch = canvas.height;
+                    const iw = img.width;
+                    const ih = img.height;
+                    if (!cw || !ch || !iw || !ih) {
+                        URL.revokeObjectURL(url);
+                        return;
+                    }
+
+                    const scale = Math.min(cw / iw, ch / ih);
+                    const dw = Math.floor(iw * scale);
+                    const dh = Math.floor(ih * scale);
+                    const dx = Math.floor((cw - dw) / 2);
+                    const dy = Math.floor((ch - dh) / 2);
+
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(0, 0, cw, ch);
+                    ctx.drawImage(img, dx, dy, dw, dh);
+
+                    URL.revokeObjectURL(url);
+                    if (lastUrlRef.current) URL.revokeObjectURL(lastUrlRef.current);
+                    lastUrlRef.current = null;
+                };
+                img.onerror = () => {
+                    URL.revokeObjectURL(url);
+                };
+                img.src = url;
+                lastUrlRef.current = url;
+            } catch (e) {
+                // ignore
+            }
+        };
+
+        return () => {
+            try {
+                ws.close();
+            } catch { }
+            wsRef.current = null;
+            if (lastUrlRef.current) {
+                try { URL.revokeObjectURL(lastUrlRef.current); } catch { }
+                lastUrlRef.current = null;
+            }
+        };
+    }, [canvasRef, camIndex, enabled, fps]);
+}
 
 const LiveCameras = () => {
     const [availableSources, setAvailableSources] = useState([]);
@@ -15,6 +91,7 @@ const LiveCameras = () => {
         'cam-02': { isLive: false, index: 1, name: 'Exit View', role: 'exit' },
     });
     const [fullscreenCam, setFullscreenCam] = useState(null);
+    const canvasRefs = useRef({});
 
     const detectSources = async () => {
         setDetecting(true);
@@ -146,15 +223,11 @@ const LiveCameras = () => {
                     <div key={id} className="bg-surface border border-border rounded-2xl overflow-hidden group">
                         <div className="aspect-video bg-black relative overflow-hidden flex items-center justify-center">
                             {cam.isLive ? (
-                                <img
-                                    src={`http://127.0.0.1:8000/api/cameras/stream?cam_id=${cam.index}`}
-                                    className="w-full h-full object-cover"
-                                    alt={cam.name}
-                                    key={`${id}-${cam.isLive}-${cam.index}`}
-                                    onError={(e) => {
-                                        alert(`Source Index ${cam.index} failed. It might be in use by another application.`);
-                                        toggleCamera(id);
-                                    }}
+                                <CameraCanvas
+                                    id={id}
+                                    cam={cam}
+                                    canvasRefs={canvasRefs}
+                                    engineRunning={engineStatus.engines[cam.index]?.status === 'running'}
                                 />
                             ) : (
                                 <div className="flex flex-col items-center justify-center text-muted space-y-3">
@@ -361,10 +434,9 @@ const LiveCameras = () => {
                     </div>
 
                     <div className="flex-1 bg-black rounded-3xl overflow-hidden shadow-2xl border border-border relative">
-                        <img
-                            src={`http://127.0.0.1:8000/api/cameras/stream?cam_id=${fullscreenCam.index}`}
-                            className="w-full h-full object-contain"
-                            alt={fullscreenCam.name}
+                        <FullscreenCameraCanvas
+                            cam={fullscreenCam}
+                            engineRunning={engineStatus.engines[fullscreenCam.index]?.status === 'running'}
                         />
 
                         <div className="absolute bottom-8 left-8 flex items-center gap-4 bg-black/40 backdrop-blur-md p-4 rounded-2xl border border-white/5">
@@ -397,6 +469,53 @@ const LiveCameras = () => {
                 </div>
             )}
         </div>
+    );
+};
+
+const CameraCanvas = ({ id, cam, canvasRefs, engineRunning }) => {
+    const canvasRef = useMemo(() => {
+        if (!canvasRefs.current[id]) canvasRefs.current[id] = React.createRef();
+        return canvasRefs.current[id];
+    }, [canvasRefs, id]);
+
+    // Use WebSocket only when engine is running (model running). If engine not running,
+    // keep previous MJPEG approach by falling back to <img> (raw feed).
+    useCameraWebSocket(canvasRef, cam.index, cam.isLive && engineRunning, 15);
+
+    return engineRunning ? (
+        <canvas
+            ref={canvasRef}
+            className="w-full h-full object-cover"
+            width={1280}
+            height={720}
+        />
+    ) : (
+        <img
+            src={`http://127.0.0.1:8000/api/cameras/stream?cam_id=${cam.index}`}
+            className="w-full h-full object-cover"
+            alt={cam.name}
+            key={`${id}-${cam.isLive}-${cam.index}`}
+        />
+    );
+};
+
+const FullscreenCameraCanvas = ({ cam, engineRunning }) => {
+    const canvasRef = useRef(null);
+    useCameraWebSocket(canvasRef, cam.index, engineRunning, 20);
+
+    return engineRunning ? (
+        <canvas
+            ref={canvasRef}
+            className="w-full h-full object-contain"
+            width={1920}
+            height={1080}
+        />
+    ) : (
+        <img
+            src={`http://127.0.0.1:8000/api/cameras/stream?cam_id=${cam.index}`}
+            className="w-full h-full object-contain"
+            alt={cam.name}
+        />
     );
 };
 
