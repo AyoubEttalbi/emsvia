@@ -117,6 +117,9 @@ Key settings in `.env`:
 - `DETECTION_CONFIDENCE`: Face detection threshold (0.9)
 - `RECOGNITION_THRESHOLD`: Face recognition threshold (0.6)
 - `ATTENDANCE_COOLDOWN`: Prevent duplicate marking (3600 seconds)
+- `STREAM_FPS`: Dashboard stream FPS (default: 30)
+- `STREAM_JPEG_QUALITY`: Dashboard JPEG quality (default: 85)
+- `STREAM_WIDTH` / `STREAM_HEIGHT`: Optional downscale for dashboard stream only (leave empty for full size)
 
 ## Development Status
 

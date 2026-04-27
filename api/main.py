@@ -15,6 +15,7 @@ from core.streaming import FrameBridge
 from typing import Dict, Optional
 import platform
 import asyncio
+from config.settings import FRAME_WIDTH, FRAME_HEIGHT
 
 # Process management for recognition engine
 engine_processes: Dict[int, subprocess.Popen] = {}
@@ -163,8 +164,8 @@ async def video_stream(cam_id: int = 0):
                 time.sleep(1.0)
                 continue
             
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
             
             while True:
                 # Check if engine started while we were streaming raw
@@ -177,7 +178,7 @@ async def video_stream(cam_id: int = 0):
                 success, frame = cap.read()
                 if not success: break
                 
-                ret, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+                ret, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
                 time.sleep(0.04)

@@ -13,8 +13,8 @@ class FrameBridge:
     def __init__(
         self,
         bridge_name: str = "emsvia_stream",
-        target_fps: int = 15,
-        jpeg_quality: int = 65,
+        target_fps: int = 30,
+        jpeg_quality: int = 85,
         stream_width: int | None = None,
         stream_height: int | None = None,
     ):
@@ -24,7 +24,7 @@ class FrameBridge:
         self.shm_b_path = Path(f"/dev/shm/{bridge_name}.b.jpg")
         self.meta_path = Path(f"/dev/shm/{bridge_name}.json")
         self._flip = False
-        self.target_fps = max(1, int(target_fps)) if target_fps else 15
+        self.target_fps = max(1, int(target_fps)) if target_fps else 30
         self.jpeg_quality = int(jpeg_quality)
         self._min_push_interval_s = 1.0 / float(self.target_fps)
         self._last_push_ts = 0.0

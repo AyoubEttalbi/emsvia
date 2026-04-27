@@ -220,8 +220,8 @@ def main():
     unknown_mgr = UnknownFaceHandler(db_manager)
     tracker = FaceTracker()
     # Stream throttling for the web dashboard (keeps MJPEG smooth, reduces freezes)
-    stream_fps = int(os.getenv("STREAM_FPS", "15"))
-    stream_jpeg_q = int(os.getenv("STREAM_JPEG_QUALITY", "65"))
+    stream_fps = int(os.getenv("STREAM_FPS", "30"))
+    stream_jpeg_q = int(os.getenv("STREAM_JPEG_QUALITY", "85"))
     stream_w = os.getenv("STREAM_WIDTH", "").strip()
     stream_h = os.getenv("STREAM_HEIGHT", "").strip()
     bridge = FrameBridge(
