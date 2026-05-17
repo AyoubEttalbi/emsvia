@@ -6,7 +6,7 @@ from scipy.spatial import distance
 import json
 import time
 from config.settings import (
-    FACE_RECOGNITION_MODEL, 
+    FACE_RECOGNITION_MODEL,
     RECOGNITION_THRESHOLD,
     USE_RECOGNITION_ENSEMBLE,
     RECOGNITION_MODELS,
@@ -16,6 +16,7 @@ from config.settings import (
     VGGFACE_THRESHOLD,
     RECOGNITION_CONFIDENCE_FLOOR,
     MIN_VECTOR_PASS_RATIO,
+    MIN_CONFIDENCE_GAP,
 )
 
 logger = logging.getLogger(__name__)
@@ -193,7 +194,8 @@ class FaceRecognizer:
             # #endregion
             
             student_metrics = {} # student_id -> {"passing_vectors": int, "match_ratio": float, "min_dist": float}
-            
+            all_student_min_dists = {} # student_id -> closest distance (used for second-best gap check)
+
             for student_id, model_dict in database_embeddings.items():
                 if not isinstance(model_dict, dict) or model_name not in model_dict:
                     continue
@@ -252,6 +254,7 @@ class FaceRecognizer:
 
                 if student_min_dist < float("inf"):
                     all_best_distances.append(student_min_dist)
+                    all_student_min_dists[student_id] = student_min_dist
 
             # Decide winner based on strongest consensus ratio, tie-break by distance
             if student_metrics:
@@ -261,18 +264,42 @@ class FaceRecognizer:
                 )
                 best_id_for_model = sorted_metrics[0][0]
                 best_min_dist = sorted_metrics[0][1]["min_dist"]
-                
-                model_results[model_name] = {"id": best_id_for_model, "dist": best_min_dist, "second_best_dist": float("inf")} # kept for compat
-                votes[best_id_for_model] = votes.get(best_id_for_model, 0) + 1
-                
-                # #region agent log
-                _debug_log("face_recognizer.py:177", "match_accepted", {
-                    "model": model_name,
-                    "best_id": best_id_for_model,
-                    "best_dist": float(best_min_dist),
-                    "gap": None
-                }, hypothesis_id="H2")
-                # #endregion
+
+                # Second-best gap check: find the closest non-winner across ALL students
+                # (including those that failed consensus — they may still be dangerously close)
+                second_best_dist = float("inf")
+                for sid, dist in sorted(all_student_min_dists.items(), key=lambda x: x[1]):
+                    if sid != best_id_for_model:
+                        second_best_dist = dist
+                        break
+
+                gap_ratio = (second_best_dist - best_min_dist) / threshold if second_best_dist < float("inf") else float("inf")
+
+                if second_best_dist < float("inf") and gap_ratio < MIN_CONFIDENCE_GAP:
+                    # Ambiguous: winner and runner-up are too close in embedding space
+                    model_results[model_name] = {"id": None, "dist": best_min_dist, "second_best_dist": second_best_dist}
+                    # #region agent log
+                    _debug_log("face_recognizer.py:177", "match_rejected_ambiguous", {
+                        "model": model_name,
+                        "best_id": best_id_for_model,
+                        "best_dist": float(best_min_dist),
+                        "second_best_dist": float(second_best_dist),
+                        "gap_ratio": float(gap_ratio),
+                        "min_confidence_gap": MIN_CONFIDENCE_GAP
+                    }, hypothesis_id="H2")
+                    # #endregion
+                else:
+                    model_results[model_name] = {"id": best_id_for_model, "dist": best_min_dist, "second_best_dist": second_best_dist}
+                    votes[best_id_for_model] = votes.get(best_id_for_model, 0) + 1
+                    # #region agent log
+                    _debug_log("face_recognizer.py:177", "match_accepted", {
+                        "model": model_name,
+                        "best_id": best_id_for_model,
+                        "best_dist": float(best_min_dist),
+                        "second_best_dist": float(second_best_dist) if second_best_dist < float("inf") else None,
+                        "gap_ratio": float(gap_ratio) if gap_ratio < float("inf") else None
+                    }, hypothesis_id="H2")
+                    # #endregion
             else:
                 model_results[model_name] = {"id": None, "dist": float("inf"), "second_best_dist": float("inf")}
                 # #region agent log

@@ -10,8 +10,9 @@ from tqdm import tqdm
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
 
-from config.settings import DATABASE_URL
+from config.settings import DATABASE_URL, DETECTION_CONFIDENCE
 from database.crud import AttendanceDB
+from models.face_detector import FaceDetector
 from models.face_recognizer import FaceRecognizer
 from models.embeddings_manager import EmbeddingsManager
 from preprocessing.pipeline import preprocess_frame
@@ -20,7 +21,7 @@ from preprocessing.pipeline import preprocess_frame
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def process_student_images(session, student, student_dir, recognizer, em_manager, db_manager, incremental=True):
+def process_student_images(session, student, student_dir, recognizer, em_manager, db_manager, detector, incremental=True):
     """
     Generates embeddings for a single student's images.
 
@@ -55,13 +56,25 @@ def process_student_images(session, student, student_dir, recognizer, em_manager
         if img is None:
             continue
 
-        # CRITICAL: Apply same preprocessing as live recognition
-        img_preprocessed = preprocess_frame(img)
-        if img_preprocessed is None:
+        # CRITICAL: Mirror the live recognition pipeline exactly.
+        # Live recognition: detect face → extract 160×160 crop → preprocess crop → embed.
+        # Enrollment must do the same so stored and live embeddings sit in the same space.
+        detections = detector.detect_faces(img, use_tiling=False)
+        if detections:
+            face_crop = detector.extract_face(img, detections[0]['box'])
+        else:
+            # Fallback for images that are already tight face crops (no face detected).
+            face_crop = cv2.resize(img, (160, 160), interpolation=cv2.INTER_AREA)
+
+        if face_crop is None:
+            continue
+
+        face_crop = preprocess_frame(face_crop)
+        if face_crop is None:
             continue
 
         # Generate embeddings for ALL active models
-        embeddings_dict = recognizer.generate_embeddings(img_preprocessed)
+        embeddings_dict = recognizer.generate_embeddings(face_crop)
         if embeddings_dict:
             for model_name, vector in embeddings_dict.items():
                 # Save to DB and Cache — pass image_path so we can track it
@@ -99,6 +112,7 @@ def generate_embeddings(incremental=True):
     # 1. Initialize Components
     db_manager = AttendanceDB(DATABASE_URL)
     session = db_manager.get_session()
+    detector = FaceDetector(min_confidence=DETECTION_CONFIDENCE)
     recognizer = FaceRecognizer()
     em_manager = EmbeddingsManager(db_manager)
     em_manager.load_embeddings(session)
@@ -125,7 +139,7 @@ def generate_embeddings(incremental=True):
                 continue
 
             success, processed, total_imgs = process_student_images(
-                session, student, student_dir, recognizer, em_manager, db_manager,
+                session, student, student_dir, recognizer, em_manager, db_manager, detector,
                 incremental=incremental
             )
             skipped = total_imgs - processed
