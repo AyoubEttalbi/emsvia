@@ -10,6 +10,11 @@ from tqdm import tqdm
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
 
+# GPU setup MUST come before importing TensorFlow / DeepFace (they initialize
+# device context at import time — too late to configure after the fact).
+from core.gpu_init import setup_gpu_environment
+setup_gpu_environment()
+
 from config.settings import DATABASE_URL, DETECTION_CONFIDENCE
 from database.crud import AttendanceDB
 from models.face_detector import FaceDetector
