@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap");
 
 @source "../index.html";
 @source "./**/*.{js,ts,jsx,tsx}";
@@ -18,7 +19,7 @@
 
   --font-head: "Syne", sans-serif;
   --font-body: "Instrument Sans", sans-serif;
-  --font-mono: "DM Mono", monospace;
+  --font-mono: "JetBrains Mono", "DM Mono", monospace;
 }
 
 @layer base {

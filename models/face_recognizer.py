@@ -10,7 +10,12 @@ from config.settings import (
     RECOGNITION_THRESHOLD,
     USE_RECOGNITION_ENSEMBLE,
     RECOGNITION_MODELS,
-    ENSEMBLE_VOTING_THRESHOLD
+    ENSEMBLE_VOTING_THRESHOLD,
+    ARCFACE_THRESHOLD,
+    FACENET512_THRESHOLD,
+    VGGFACE_THRESHOLD,
+    RECOGNITION_CONFIDENCE_FLOOR,
+    MIN_VECTOR_PASS_RATIO,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,12 +46,13 @@ class FaceRecognizer:
     """
     
     # Default thresholds for models (Cosine Distance)
-    # Based on DeepFace official recommendations and industry standards
+    # These are overridden at runtime by per-model env vars from settings.
+    # Kept here as fallbacks and for models not exposed via env.
     THRESHOLDS = {
-        "Facenet512": 0.30,  # Standard DeepFace threshold
-        "ArcFace": 0.35,     # Stricter threshold for ArcFace (Cosine distance: lower is better)
-        "VGG-Face": 0.40,    # Standard DeepFace threshold
-        "Facenet": 0.40,     # Standard DeepFace threshold
+        "Facenet512": FACENET512_THRESHOLD,
+        "ArcFace": ARCFACE_THRESHOLD,
+        "VGG-Face": VGGFACE_THRESHOLD,
+        "Facenet": 0.40,
         "OpenFace": 0.10,
         "DeepFace": 0.23,
         "DeepID": 0.01
@@ -207,13 +213,13 @@ class FaceRecognizer:
                         student_min_dist = dist
                             
                 # CONSENSUS RULE:
-                # Require > 20% of total vectors to match to confirm identity.
+                # Require >= MIN_VECTOR_PASS_RATIO of total vectors to match to confirm identity.
                 # This filters out "bad apple" embeddings that match everyone.
                 
                 match_ratio = passing_vectors / total_vectors if total_vectors > 0 else 0
                 
-                # Minimum requirement: 2 matches OR 20% of total
-                required_matches = max(2, int(total_vectors * 0.20))
+                # Minimum requirement: 2 matches OR MIN_VECTOR_PASS_RATIO of total
+                required_matches = max(2, int(total_vectors * MIN_VECTOR_PASS_RATIO))
                 
                 if passing_vectors >= required_matches:
                     student_metrics[student_id] = {
@@ -310,10 +316,18 @@ class FaceRecognizer:
         if match_found:
             # Confidence based on distance quality
             avg_threshold = np.mean([self.THRESHOLDS.get(m, 0.40) for m in source_embeddings.keys()])
-            confidence = max(0.0, 1.0 - (avg_distance / avg_threshold))
+            # Rescale: distances well below threshold should score high confidence.
+            # Without this, distance=0.275 / threshold=0.30 → confidence=0.083 (too harsh).
+            confidence = max(0.0, min(1.0, 1.0 - (avg_distance / avg_threshold)) * 2.0)
         else:
             confidence = 0.0
             logger.info(f"❌ REJECTED: Vote ratio {vote_ratio:.2f} < threshold {ENSEMBLE_VOTING_THRESHOLD:.2f}")
+
+        # Confidence floor: reject even winning matches below threshold
+        if match_found and confidence < RECOGNITION_CONFIDENCE_FLOOR:
+            match_found = False
+            confidence = 0.0
+            logger.info(f"❌ REJECTED: Confidence {confidence:.3f} (dist={avg_distance:.3f}) below floor {RECOGNITION_CONFIDENCE_FLOOR:.2f}")
         
         # #region agent log
         _debug_log("face_recognizer.py:213", "final_result", {

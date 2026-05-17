@@ -70,6 +70,28 @@ try:
                     sys.stdout.write(f"  📦 Pre-loaded {lib_name}\n")
                 except Exception as le:
                     sys.stdout.write(f"  ⚠️  Failed to pre-load {lib_name}: {le}\n")
+
+            # PRE-LOAD CUDA 12 + cuDNN 9 libs for ONNX Runtime GPU support
+            # These are bundled with PyTorch and needed by onnxruntime's CUDA provider
+            onnx_cuda_libs = [
+                "libcudart.so.12",
+                "libcublas.so.12", "libcublasLt.so.12",
+                "libcurand.so.10",
+                "libcudnn.so.9",
+                "libcufft.so.11",
+                "libcusolver.so.11",
+                "libcusparse.so.12",
+            ]
+            for lib_name in onnx_cuda_libs:
+                for lib_dir in unique_paths:
+                    lib_path = os.path.join(lib_dir, lib_name)
+                    if os.path.exists(lib_path):
+                        try:
+                            ctypes.CDLL(lib_path, mode=ctypes.RTLD_GLOBAL)
+                            sys.stdout.write(f"  📦 Pre-loaded {lib_name}\n")
+                            break
+                        except Exception as le:
+                            continue
             
         current_ld = os.environ.get("LD_LIBRARY_PATH", "")
         new_ld = ":".join(unique_paths)
@@ -112,7 +134,8 @@ except Exception as e:
 
 # Set TF specific flags
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TF warnings (0=All, 1=Info, 2=Warning, 3=Error)
+os.environ['ORT_LOGGING_LEVEL'] = '3'  # Suppress ONNX Runtime warnings
 os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=0 --tf_xla_cpu_global_jit'
 
 # Try to limit TF VRAM early
@@ -137,7 +160,7 @@ from config.settings import (
     DATABASE_URL, IDENTITY_STABILITY_THRESHOLD, MIN_BUFFER_FOR_RECOG, 
     RECOGNITION_MODELS, DEBUG_MODE, DETECTION_SKIP_FRAMES, RECOGNITION_INTERVAL_FRAMES,
     BATCH_PROCESSING, BATCH_SIZE, CLEAR_CACHE_INTERVAL, USE_GPU, DETECTION_CONFIDENCE,
-    CAMERA_INDEX, CAMERA_AUTO_SELECT
+    CAMERA_INDEX, CAMERA_AUTO_SELECT, DRAW_LANDMARKS
 )
 from database.crud import AttendanceDB
 from models.face_detector import FaceDetector
@@ -300,7 +323,8 @@ def main():
 
                     # Submit recognition job to background thread (non-blocking)
                     if needs_recognition:
-                        async_recognizer.submit(tid, frame, [x, y, w, h])
+                        landmarks = track_data.get('landmarks')
+                        async_recognizer.submit(tid, frame, [x, y, w, h], landmarks)
                     
                     # Poll for recognition results (non-blocking)
                     rec_result = async_recognizer.get_result(tid)
@@ -308,12 +332,23 @@ def main():
                         track_data['last_match'] = rec_result
                         new_id = rec_result["student_id"] if rec_result["match_found"] else None
                         
+                        # Track rolling confidence for this identity
+                        if new_id is not None:
+                            track_data['confidence_history'].append(rec_result.get("confidence", 0.0))
+                        
                         if new_id:
                             if new_id == track_data['current_identity']:
                                 track_data['identity_stability_counter'] = 0
                             else:
+                                # Require both: enough consecutive frames AND rolling avg confidence
+                                avg_conf = (
+                                    np.mean(track_data['confidence_history'])
+                                    if len(track_data['confidence_history']) >= 2
+                                    else 0.0
+                                )
                                 track_data['identity_stability_counter'] += 1
-                                if track_data['identity_stability_counter'] >= IDENTITY_STABILITY_THRESHOLD:
+                                if (track_data['identity_stability_counter'] >= IDENTITY_STABILITY_THRESHOLD
+                                        and avg_conf >= 0.5):
                                     track_data['current_identity'] = new_id
                                     track_data['identity_stability_counter'] = 0
                                     logger.info(f"✨ Track {tid} identified as: {student_names.get(new_id, new_id)}")
@@ -331,6 +366,16 @@ def main():
                     
                     cv2.rectangle(display_frame, (x_disp, y), (x_disp + w, y + h), color, 2)
                     cv2.putText(display_frame, label, (x_disp, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                    
+                    # Draw landmarks (toggleable via DRAW_LANDMARKS)
+                    if DRAW_LANDMARKS:
+                        landmarks = track_data.get('landmarks')
+                        if landmarks and isinstance(landmarks, list) and len(landmarks) == 5:
+                            colors = [(0, 255, 255), (255, 255, 0), (255, 0, 255), (0, 255, 0), (255, 128, 255)]
+                            for idx, lm in enumerate(landmarks):
+                                lx_disp = img_w_disp - int(lm[0])
+                                ly = int(lm[1])
+                                cv2.circle(display_frame, (lx_disp, ly), 4, colors[idx], -1)
                 
                 attend_mgr.clean_stale_tracks(active_track_ids)
                 

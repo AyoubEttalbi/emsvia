@@ -105,7 +105,7 @@ USE_TILING = os.getenv("USE_TILING", "False").lower() == "true"
 TILE_SIZE = (1080, 1080)
 TILE_OVERLAP = float(os.getenv("TILE_OVERLAP", "0.2"))
 NMS_IOU_THRESHOLD = float(os.getenv("NMS_IOU_THRESHOLD", "0.4"))
-MIN_FACE_SIZE_DETECTION = int(os.getenv("MIN_FACE_SIZE_DETECTION", "20"))
+MIN_FACE_SIZE_DETECTION = int(os.getenv("MIN_FACE_SIZE_DETECTION", "60"))
 DETECTION_INTERVAL = int(os.getenv("DETECTION_INTERVAL", "1"))
 RECOGNITION_INTERVAL = int(os.getenv("RECOGNITION_INTERVAL", "1"))
 DEBUG_MODE = os.getenv("DEBUG_MODE", "True").lower() == "true"
@@ -124,6 +124,22 @@ SR_MIN_SIZE = int(os.getenv("SR_MIN_SIZE", "64"))
 USE_RECOGNITION_ENSEMBLE = os.getenv("USE_RECOGNITION_ENSEMBLE", "True").lower() == "true"
 RECOGNITION_MODELS = get_active_recognizers()
 ENSEMBLE_VOTING_THRESHOLD = float(os.getenv("ENSEMBLE_VOTING_THRESHOLD", "0.5"))  # 50% of models must agree
+
+# Per-model recognition thresholds (cosine distance, overrides hardcoded defaults)
+ARCFACE_THRESHOLD = float(os.getenv("ARCFACE_THRESHOLD", "0.32"))
+FACENET512_THRESHOLD = float(os.getenv("FACENET512_THRESHOLD", "0.28"))
+VGGFACE_THRESHOLD = float(os.getenv("VGGFACE_THRESHOLD", "0.30"))
+
+# Confidence floor: reject any match below this even if it wins the vote
+RECOGNITION_CONFIDENCE_FLOOR = float(os.getenv("RECOGNITION_CONFIDENCE_FLOOR", "0.0"))
+
+# Minimum ratio of student's embedding vectors that must pass threshold (0.0–1.0)
+MIN_VECTOR_PASS_RATIO = float(os.getenv("MIN_VECTOR_PASS_RATIO", "0.20"))
+
+# Maximum allowed face pose angle (yaw) in degrees; 0 or negative disables check
+MAX_POSE_ANGLE = float(os.getenv("MAX_POSE_ANGLE", "0"))
+# Toggle for drawing facial landmarks on the video feed
+DRAW_LANDMARKS = os.getenv("DRAW_LANDMARKS", "True").lower() == "true"
 # Legacy settings (kept for compatibility, not used in simplified algorithm)
 RECOGNITION_QUALITY_MULTIPLIER = float(os.getenv("RECOGNITION_QUALITY_MULTIPLIER", "1.0"))
 STRONG_MATCH_MULTIPLIER = float(os.getenv("STRONG_MATCH_MULTIPLIER", "0.6"))

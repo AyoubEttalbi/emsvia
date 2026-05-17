@@ -61,7 +61,7 @@ class AsyncRecognizer:
         self.stopped = True
         self.thread.join(timeout=2.0)
     
-    def submit(self, track_id, frame, box):
+    def submit(self, track_id, frame, box, landmarks=None):
         """
         Submit a recognition job. Non-blocking.
         If the worker is busy or queue is full, the job is silently dropped.
@@ -71,7 +71,7 @@ class AsyncRecognizer:
                 return  # Worker is busy, skip this frame
         
         try:
-            self.task_queue.put_nowait((track_id, frame.copy(), box))
+            self.task_queue.put_nowait((track_id, frame.copy(), box, landmarks))
         except queue.Full:
             pass  # Drop if queue is full
     
@@ -87,7 +87,7 @@ class AsyncRecognizer:
         """Background worker that processes recognition tasks."""
         while not self.stopped:
             try:
-                track_id, frame, box = self.task_queue.get(timeout=0.1)
+                track_id, frame, box, landmarks = self.task_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
             
@@ -118,7 +118,7 @@ class AsyncRecognizer:
                 face_crop = preprocess_frame(face_crop)
                 
                 # 2. Quality check
-                quality = self.detector.check_image_quality(face_crop)
+                quality = self.detector.check_image_quality(face_crop, box=box, landmarks=landmarks)
                 if not quality.get('passed', False):
                     # #region agent log
                     _debug_log("async_recognizer.py:83", "quality_check_failed", {

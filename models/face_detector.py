@@ -16,7 +16,8 @@ from config.settings import (
     USE_ENSEMBLE,
     ENSEMBLE_DETECTORS,
     USE_GPU, 
-    DEVICE
+    DEVICE,
+    MAX_POSE_ANGLE,
 )
 from detection.tiling import get_tiles, map_to_original, apply_nms
 from detection.ensemble_detection import fuse_detections
@@ -70,12 +71,76 @@ class FaceDetector:
             
         # Initialize ONNX detector if GPU is enabled
         self.onnx_detector = None
-        if USE_GPU and "retinaface" in self.active_detectors:
-            self.onnx_detector = RetinaFaceONNX(device=DEVICE)
-            if not self.onnx_detector.is_ready():
-                logger.info("Falling back to DeepFace RetinaFace (ONNX not ready)")
+        # ONNX detector disabled - DeepFace RetinaFace is more accurate
+        # if USE_GPU and "retinaface" in self.active_detectors:
+        #     self.onnx_detector = RetinaFaceONNX(device=DEVICE)
+        #     if not self.onnx_detector.is_ready():
+        #         logger.info("Falling back to DeepFace RetinaFace (ONNX not ready)")
         
         logger.info(f"FaceDetector initialized with active detectors: {self.active_detectors}")
+
+    @staticmethod
+    def estimate_yaw_from_landmarks(landmarks: Dict) -> float:
+        """
+        Estimate horizontal face rotation (yaw) from facial landmarks.
+        Uses asymmetry in eye-to-nose horizontal distances.
+
+        Returns approximate yaw in degrees. Positive = turned right, negative = turned left.
+        Accuracy: ±10°. Returns 0.0 if landmarks are incomplete.
+        """
+        try:
+            left_eye = landmarks.get("left_eye")
+            right_eye = landmarks.get("right_eye")
+            nose = landmarks.get("nose")
+
+            if left_eye is None or right_eye is None or nose is None:
+                return 0.0
+
+            lx, ly = left_eye
+            rx, ry = right_eye
+            nx, ny = nose
+
+            # Horizontal distances from each eye to nose
+            dl = abs(nx - lx)
+            dr = abs(rx - nx)
+            total = dl + dr
+
+            if total == 0:
+                return 0.0
+
+            # Asymmetry ratio: 0 = frontal, approaches 1 = fully turned
+            asymmetry = abs(dl - dr) / total
+
+            # Map to degrees: asymmetry 0.5 ≈ 45°, clamp at 90°
+            yaw = asymmetry * 90.0
+            # Sign: if left eye is further from nose, face is turned right (positive yaw)
+            if dl > dr:
+                yaw = -yaw  # turned left
+            return yaw
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def estimate_yaw_from_crop(face_crop: np.ndarray, box: List[int], img_w: int) -> float:
+        """
+        Fallback yaw estimate from face crop aspect ratio when landmarks unavailable.
+        Frontal faces have aspect ratio ~0.75 (taller than wide).
+        Side profiles are narrower (ratio ~0.5).
+
+        Returns approximate yaw in degrees.
+        """
+        try:
+            h, w = face_crop.shape[:2]
+            aspect = w / h if h > 0 else 1.0
+
+            # Frontal aspect ≈ 0.75, profile ≈ 0.4-0.5
+            # Map: 0.75 → 0°, 0.5 → 60°
+            if aspect >= 0.7:
+                return 0.0
+            yaw = min(60.0, (0.75 - aspect) * 120.0)
+            return yaw
+        except Exception:
+            return 0.0
 
     def detect_only_model(self, image: np.ndarray, backend: str) -> List[Dict[str, Any]]:
         """
@@ -125,12 +190,21 @@ class FaceDetector:
             detections = []
             for res in results:
                 if res['confidence'] >= self.min_confidence:
-                    detections.append({
+                    det = {
                         'box': [res['facial_area']['x'], res['facial_area']['y'], 
                                res['facial_area']['w'], res['facial_area']['h']],
                         'confidence': res['confidence'],
                         'model': backend
-                    })
+                    }
+                    # DeepFace stores landmarks inside facial_area as left_eye, right_eye, nose, mouth_left, mouth_right
+                    fa = res.get('facial_area', {})
+                    lm_keys = ['left_eye', 'right_eye', 'nose', 'mouth_left', 'mouth_right']
+                    if any(k in fa for k in lm_keys):
+                        det['landmarks'] = [fa.get(k) for k in lm_keys if k in fa]
+                    # Also check standalone 'landmarks' key (ONNX path)
+                    if 'landmarks' in res and 'landmarks' not in det:
+                        det['landmarks'] = res['landmarks']
+                    detections.append(det)
             return detections
         except Exception as e:
             logger.error(f"DeepFace detection error: {e}")
@@ -256,9 +330,14 @@ class FaceDetector:
         
         return face_crop
 
-    def check_image_quality(self, image: np.ndarray) -> Dict[str, Any]:
+    def check_image_quality(self, image: np.ndarray, box: List[int] = None, landmarks=None) -> Dict[str, Any]:
         """
         Perform basic quality checks on a face image.
+
+        Args:
+            image: Face crop (BGR)
+            box: Original detection box [x, y, w, h] for aspect-ratio yaw fallback
+            landmarks: Dict with 'left_eye', 'right_eye', 'nose' OR list of 5 [(x,y), ...] points
         """
         results = {"passed": True, "blur_score": 0.0, "is_blurry": False, "brightness": 0.0, "is_too_dark": False, "is_too_bright": False}
         if image is None or image.size == 0:
@@ -268,6 +347,26 @@ class FaceDetector:
             }, hypothesis_id="H4")
             # #endregion
             return {"passed": False}
+
+        # Normalize landmarks: convert list format to dict for pose estimation
+        lm_dict = None
+        if landmarks:
+            if isinstance(landmarks, dict):
+                lm_dict = landmarks
+            elif isinstance(landmarks, (list, tuple)) and len(landmarks) == 5:
+                lm_keys = ['left_eye', 'right_eye', 'nose', 'mouth_left', 'mouth_right']
+                lm_dict = {k: v for k, v in zip(lm_keys, landmarks)}
+
+        # --- Pose / Angle Rejection ---
+        # Only use landmarks (RetinaFace provides them). Skip crop-based fallback —
+        # it's unreliable because it can't distinguish face shape from actual pose.
+        if MAX_POSE_ANGLE > 0 and lm_dict:
+            yaw = self.estimate_yaw_from_landmarks(lm_dict)
+            if abs(yaw) > MAX_POSE_ANGLE:
+                results["passed"] = False
+                results["pose_angle"] = abs(yaw)
+                results["is_extreme_pose"] = True
+                logger.debug(f"Pose rejection: yaw={yaw:.1f}° > max={MAX_POSE_ANGLE}°")
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
         results["blur_score"] = blur_score

@@ -80,6 +80,9 @@ class FaceTracker:
                 self.tracks[tid]['box'] = detections[d_idx]['box']
                 self.tracks[tid]['disappeared'] = 0
                 detections[d_idx]['track_id'] = tid
+                # Update landmarks with latest detection
+                if 'landmarks' in detections[d_idx]:
+                    self.tracks[tid]['landmarks'] = detections[d_idx]['landmarks']
                 matched_tracks.add(tid)
                 matched_dets.add(d_idx)
 
@@ -107,7 +110,9 @@ class FaceTracker:
             'identity_stability_counter': 0,
             'current_identity': None,
             'last_match': None,
-            'frame_count': 0
+            'frame_count': 0,
+            'landmarks': detection.get('landmarks'),
+            'confidence_history': deque(maxlen=5),  # Rolling window for confidence averaging
         }
         detection['track_id'] = tid
         self.next_track_id += 1
